@@ -79,6 +79,36 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
                 'Digest style' => 'Стиль дайджеста',
                 'Run digest now' => 'Собрать дайджест сейчас',
             ],
+            'fr' => [
+                'Chat Summarizer' => 'Résumé de chat',
+                'Scheduled LLM digests of the chat' => 'Digests LLM planifiés du chat',
+                'Digests enabled' => 'Digests activés',
+                'Interval' => 'Intervalle',
+                'Min messages to trigger' => 'Messages minimum pour déclencher',
+                'LLM provider' => 'Fournisseur LLM',
+                'Digest style' => 'Style de digest',
+                'Run digest now' => 'Exécuter le digest maintenant',
+            ],
+            'es' => [
+                'Chat Summarizer' => 'Resumen de chat',
+                'Scheduled LLM digests of the chat' => 'Digests LLM programados del chat',
+                'Digests enabled' => 'Digests habilitados',
+                'Interval' => 'Intervalo',
+                'Min messages to trigger' => 'Mín. mensajes para activar',
+                'LLM provider' => 'Proveedor LLM',
+                'Digest style' => 'Estilo de digest',
+                'Run digest now' => 'Ejecutar digest ahora',
+            ],
+            'zh' => [
+                'Chat Summarizer' => '聊天摘要',
+                'Scheduled LLM digests of the chat' => '定期LLM聊天摘要',
+                'Digests enabled' => '摘要已启用',
+                'Interval' => '间隔',
+                'Min messages to trigger' => '触发所需最少消息数',
+                'LLM provider' => 'LLM服务商',
+                'Digest style' => '摘要风格',
+                'Run digest now' => '立即生成摘要',
+            ],
         ];
     }
 
