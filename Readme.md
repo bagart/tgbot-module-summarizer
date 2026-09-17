@@ -45,7 +45,7 @@ composer test   # from this directory; uses the host app's PHPUnit
 
 ## Menu integration
 
-Menu-hub surface per `telegram-platform-menu/docs/tasks/menu_integration.md` (M-3c):
+Menu-hub surface per `telegram-platform-menu` contribution system (M-3c):
 `SummarizerWebUi` (§8.3 schema form over `SummarizerSettings` keys) and
 `SummarizerUiHandler` executing the `run-now` UiAction through
 `ModuleFactory::digestRunnerSync()` (Admin, chat-scoped).
