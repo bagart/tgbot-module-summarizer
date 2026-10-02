@@ -1,7 +1,7 @@
 # tgbot-module-summarizer — Tasks
 
 > Active plans go here. One file = one task.
-> After completion, compress essence into `../SDD-<topic>.md` and delete the task file.
+> After completion, compress essence into `../sdd/<topic>.md` and delete the task file.
 
 ## Rules
 

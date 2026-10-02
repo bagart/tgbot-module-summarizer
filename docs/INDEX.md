@@ -4,7 +4,7 @@
 
 | Need | File |
 |---|---|
-| What it does, decisions | `SDD-summarizer` |
+| What it does, decisions | [`sdd/summarizer.md`](sdd/summarizer.md) |
 
 ## Source map (src/)
 
