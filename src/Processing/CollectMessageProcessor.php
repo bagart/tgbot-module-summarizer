@@ -16,6 +16,7 @@ use BAGArt\TelegramBot\TgApi\Methods\Enum\ParseModeEnum;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\Enum\ChatPropTypeEnum;
 use Illuminate\Support\Facades\Log;
+use BAGArt\TelegramBotSummarizer\I18n\SummarizerStrings;
 use BAGArt\TelegramBotSummarizer\Llm\LlmProviderRegistry;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerChatAccess;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerMessage;
@@ -95,9 +96,10 @@ class CollectMessageProcessor implements TgModuleProcessorContract
             return;
         }
 
-        // Per-chat opt-in: nothing is consumed or collected until a chat
-        // admin turns the summarizer on via /summarizer.
-        if (! $this->settings->get($botId, $chatId)->enabled) {
+        // Chat-scope enablement gate: collection (and the pending-input
+        // flows behind it) runs only where a chat admin opted in via
+        // /summarizer — descriptor chat default is OFF.
+        if (! $this->settings->isEnabled($botId, $chatId)) {
             return;
         }
 
@@ -163,23 +165,30 @@ class CollectMessageProcessor implements TgModuleProcessorContract
 
         $text = trim((string) ($message->text ?? ''));
 
+        $settings = $this->settings->get($botId, $chatId);
+        $t = fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
+
         try {
             match ($action->action) {
-                PendingInputService::ACTION_TOKEN => $this->handleTokenInput($message, $botConfig, $botId, $chatId, $text, $action),
-                PendingInputService::ACTION_TEMPLATE => $this->handleTemplateInput($botConfig, $botId, $chatId, $text),
-                PendingInputService::ACTION_PROVIDER_JSON => $this->handleProviderJsonInput($message, $botConfig, $botId, $chatId, $text),
-                PendingInputService::ACTION_MIN_MESSAGES => $this->handleMinMessagesInput($botConfig, $botId, $chatId, $text),
+                PendingInputService::ACTION_TOKEN => $this->handleTokenInput($message, $botConfig, $botId, $chatId, $text, $action, $t),
+                PendingInputService::ACTION_TEMPLATE => $this->handleTemplateInput($botConfig, $botId, $chatId, $text, $t),
+                PendingInputService::ACTION_PROVIDER_JSON => $this->handleProviderJsonInput($message, $botConfig, $botId, $chatId, $text, $t),
+                PendingInputService::ACTION_MIN_MESSAGES => $this->handleMinMessagesInput($botConfig, $botId, $chatId, $text, $t),
+                PendingInputService::ACTION_MODEL => $this->handleModelInput($botConfig, $botId, $chatId, $text, $t),
                 default => null,
             };
         } catch (\InvalidArgumentException $e) {
             // Re-arm so the admin can resend corrected input without reopening the menu
             $this->pending->start($botId, $chatId, (int) $message->from->id, $action->action, $action->payload ?? []);
-            $this->reply($botConfig, $chatId, '⚠️ '.$e->getMessage()."\nSend corrected input, or /summarizer_cancel to abort.");
+            $this->reply($botConfig, $chatId, $t('error.input_correct_and_retry', ['message' => $e->getMessage()]));
         }
 
         return true;
     }
 
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
     private function handleTokenInput(
         MessageTypeDTO $message,
         TgBotConfig $botConfig,
@@ -187,18 +196,19 @@ class CollectMessageProcessor implements TgModuleProcessorContract
         int $chatId,
         string $text,
         \BAGArt\TelegramBotSummarizer\Models\SummarizerPendingAction $action,
+        callable $t,
     ): void {
         $token = preg_replace('/\s+/', '', $text) ?? '';
 
         if (mb_strlen($token) < 8 || mb_strlen($token) > 512) {
-            throw new \InvalidArgumentException('API key must be 8–512 characters.');
+            throw new \InvalidArgumentException($t('error.token_key_length'));
         }
 
         $providerKey = (string) ($action->payload['provider_key'] ?? '');
         $preset = ModuleFactory::providers()->get($providerKey);
 
         if ($providerKey === '' || (! ModuleFactory::providers()->has($providerKey))) {
-            throw new \InvalidArgumentException('Unknown provider for this token flow.');
+            throw new \InvalidArgumentException($t('error.token_unknown_provider'));
         }
 
         $row = SummarizerToken::create([
@@ -220,34 +230,40 @@ class CollectMessageProcessor implements TgModuleProcessorContract
         $this->reply(
             $botConfig,
             $chatId,
-            sprintf(
-                "✅ %s key stored as <code>%s</code> and set active.\nFull value is encrypted at rest and never displayed again.",
-                $preset?->name ?? $providerKey,
-                SummarizerToken::mask($token),
-            ),
+            $t('token_confirm.stored', [
+                'provider' => $preset?->name ?? $providerKey,
+                'masked' => SummarizerToken::mask($token),
+            ]),
         );
     }
 
-    private function handleTemplateInput(TgBotConfig $botConfig, string $botId, int $chatId, string $text): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function handleTemplateInput(TgBotConfig $botConfig, string $botId, int $chatId, string $text, callable $t): void
     {
         if (mb_strlen($text) < 20 || mb_strlen($text) > 4000) {
-            throw new \InvalidArgumentException('Template must be 20–4000 characters.');
+            throw new \InvalidArgumentException($t('error.template_length'));
         }
 
         if (! str_contains($text, '{period}') && ! str_contains($text, '{stats}')) {
-            throw new \InvalidArgumentException('Include at least one placeholder: {period}, {stats}, {language}.');
+            throw new \InvalidArgumentException($t('error.template_no_placeholder'));
         }
 
         $this->settings->patch($botId, $chatId, ['custom_template' => $text, 'template_id' => 'witty']);
-        $this->reply($botConfig, $chatId, '✅ Custom template saved.');
+        $this->reply($botConfig, $chatId, $t('token_confirm.template_saved'));
     }
 
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
     private function handleProviderJsonInput(
         MessageTypeDTO $message,
         TgBotConfig $botConfig,
         string $botId,
         int $chatId,
         string $text,
+        callable $t,
     ): void {
         $config = ModuleFactory::providers()->validateCustomConfig($text);
 
@@ -259,24 +275,46 @@ class CollectMessageProcessor implements TgModuleProcessorContract
         $this->reply(
             $botConfig,
             $chatId,
-            sprintf('✅ Custom provider "%s" saved (%s / %s).', $config['name'], $config['base_url'], $config['model']),
+            $t('token_confirm.custom_saved', [
+                'name' => $config['name'],
+                'base_url' => $config['base_url'],
+                'model' => $config['model'],
+            ]),
         );
     }
 
-    private function handleMinMessagesInput(TgBotConfig $botConfig, string $botId, int $chatId, string $text): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function handleMinMessagesInput(TgBotConfig $botConfig, string $botId, int $chatId, string $text, callable $t): void
     {
         if (! ctype_digit($text)) {
-            throw new \InvalidArgumentException('Send a plain number.');
+            throw new \InvalidArgumentException($t('error.min_messages_not_number'));
         }
 
         $value = (int) $text;
 
         if ($value < 1 || $value > 5000) {
-            throw new \InvalidArgumentException('Value must be between 1 and 5000.');
+            throw new \InvalidArgumentException($t('error.min_messages_out_of_range'));
         }
 
         $this->settings->patch($botId, $chatId, ['min_messages' => $value]);
-        $this->reply($botConfig, $chatId, "✅ Min messages set to {$value}.");
+        $this->reply($botConfig, $chatId, $t('token_confirm.min_messages_set', ['count' => (string) $value]));
+    }
+
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function handleModelInput(TgBotConfig $botConfig, string $botId, int $chatId, string $text, callable $t): void
+    {
+        $model = trim($text);
+
+        if ($model === '') {
+            throw new \InvalidArgumentException($t('error.unknown_model'));
+        }
+
+        $this->settings->patch($botId, $chatId, ['model_override' => $model]);
+        $this->reply($botConfig, $chatId, $t('confirm.model_selected'));
     }
 
     private function collect(MessageTypeDTO $message, string $botId, int $chatId): void

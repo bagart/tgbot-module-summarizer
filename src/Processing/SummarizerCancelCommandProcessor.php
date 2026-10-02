@@ -13,6 +13,7 @@ use BAGArt\TelegramBot\Processing\BotProcessorContext;
 use BAGArt\TelegramBot\Processing\ErrorHandling\ProcessorErrorContext;
 use BAGArt\TelegramBot\TgApi\Methods\DTO\SendMessageMethodDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
+use BAGArt\TelegramBotSummarizer\I18n\SummarizerStrings;
 use BAGArt\TelegramBotSummarizer\ModuleFactory;
 
 /**
@@ -68,8 +69,12 @@ class SummarizerCancelCommandProcessor implements TgModuleProcessorContract
         }
 
         $chatId = (int) $dto->chat->id;
+        $botId = (string) $botConfig->botId;
+        $settings = ModuleFactory::settings()->get($botId, $chatId);
+        $t = fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
+
         $cancelled = ModuleFactory::pending()->cancel(
-            (string) $botConfig->botId,
+            $botId,
             $chatId,
             (int) $dto->from->id,
         );
@@ -77,8 +82,8 @@ class SummarizerCancelCommandProcessor implements TgModuleProcessorContract
         $this->sender->send($botConfig, new SendMessageMethodDTO(
             chatId: (string) $chatId,
             text: $cancelled > 0
-                ? '↩️ Input cancelled.'
-                : 'Nothing to cancel.',
+                ? $t('cancel.done')
+                : $t('cancel.nothing'),
         ));
     }
 

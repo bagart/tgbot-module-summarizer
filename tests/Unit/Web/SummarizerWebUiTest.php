@@ -36,8 +36,22 @@ it('declares the run-now action and its matching webApi route', function () {
         ->and($routes[0]->chatScope)->toBe(ChatScope::Required);
 });
 
+it('declares a schema entry without the legacy enablement field', function () {
+    $keys = [];
+
+    foreach (SummarizerWebUi::manifest()->entry->groups as $group) {
+        foreach ($group->fields as $field) {
+            $keys[] = $field->key;
+        }
+    }
+
+    expect($keys)->toBe(['interval_minutes', 'min_messages', 'provider_key', 'template_id'])
+        ->and($keys)->not->toContain('enabled');
+});
+
 it('maps schema keys onto SummarizerSettings raw keys via validate', function () {
-    $patch = (new SummarizerWebUi)->validate([
+    $patch = (new SummarizerWebUi())->validate([
+        // legacy payload key: enablement is no longer part of this form
         'enabled' => true,
         'interval_minutes' => '99999',
         'min_messages' => 25,
@@ -45,7 +59,7 @@ it('maps schema keys onto SummarizerSettings raw keys via validate', function ()
         'template_id' => 'detailed',
     ]);
 
-    expect($patch['enabled'])->toBeTrue()
+    expect($patch)->not->toHaveKey('enabled')
         ->and($patch['interval_minutes'])->toBe(10080)
         ->and($patch['min_messages'])->toBe(25)
         ->and($patch['provider_key'])->toBe('groq')
@@ -53,21 +67,19 @@ it('maps schema keys onto SummarizerSettings raw keys via validate', function ()
 });
 
 it('feeds the validated patch straight into SummarizerSettings::fromArray', function () {
-    $patch = (new SummarizerWebUi)->validate([
-        'enabled' => true,
+    $patch = (new SummarizerWebUi())->validate([
         'interval_minutes' => 60,
         'template_id' => 'laconic',
     ]);
 
     $settings = SummarizerSettings::fromArray($patch);
 
-    expect($settings->enabled)->toBeTrue()
-        ->and($settings->intervalMinutes)->toBe(60)
+    expect($settings->intervalMinutes)->toBe(60)
         ->and($settings->templateId)->toBe('laconic');
 });
 
 it('rejects unknown provider and template values', function () {
-    $form = new SummarizerWebUi;
+    $form = new SummarizerWebUi();
 
     expect(fn () => $form->validate(['provider_key' => 'skynet']))
         ->toThrow(InvalidArgumentException::class)
@@ -95,7 +107,7 @@ it('answers 404 for unknown routes from the context alone (G9)', function () {
         context: $context,
     );
 
-    $response = (new SummarizerUiHandler)->handle($request, ['unknown']);
+    $response = (new SummarizerUiHandler())->handle($request, ['unknown']);
 
     expect($response->status)->toBe(404)
         ->and($response->body['error']['code'])->toBe('not_found');

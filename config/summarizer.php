@@ -8,8 +8,9 @@ declare(strict_types=1);
 |--------------------------------------------------------------------------
 |
 | Chat digest module (bagart/tgbot-module-summarizer). Per-chat
-| settings live in tg_module_enablements.module_settings; these are
-| platform defaults and operational limits.
+| settings live in the module settings store behind
+| ModuleSettingsContract; these are platform defaults and
+| operational limits.
 |
 */
 

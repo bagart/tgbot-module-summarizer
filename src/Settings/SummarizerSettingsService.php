@@ -6,13 +6,16 @@ namespace BAGArt\TelegramBotSummarizer\Settings;
 
 use BAGArt\TelegramBot\Contracts\Modules\ModuleEnablementContract;
 use BAGArt\TelegramBot\Contracts\Modules\ModuleSettingsContract;
-use BAGArt\TelegramBotManagement\Models\TgModuleEnablement;
-use Illuminate\Support\Facades\DB;
 
 /**
- * Reads effective summarizer settings and persists chat-level patches into
- * the module enablement row (same row drives is_enabled), busting caches
- * through ModuleEnablementContract::refresh().
+ * Reads effective summarizer settings and persists chat-level patches
+ * through ModuleSettingsContract (driver-agnostic: legacy enablement rows
+ * or engine activation rows). The reserved `enabled` patch key is the only
+ * WRITE path for chat enablement — it never lands in the settings map, and
+ * patch() invalidates the enablement memo so the next read sees the write
+ * instead of waiting out the driver's cache TTL. Enablement reads go
+ * through isEnabled(): the single source of truth for collection, digests
+ * and the admin panel.
  */
 class SummarizerSettingsService
 {
@@ -35,38 +38,17 @@ class SummarizerSettingsService
     }
 
     /**
-     * @param  array<string, mixed>  $patch settings keys to merge into the chat-level row
+     * @param  array<string, mixed|null>  $patch  settings keys to merge at the chat scope; null removes a key; the reserved `enabled` key routes to chat enablement, never into the settings map
      */
     public function patch(string $botId, int $chatId, array $patch): void
     {
-        DB::transaction(function () use ($botId, $chatId, $patch): void {
-            $row = TgModuleEnablement::query()
-                ->where('bot_id', $botId)
-                ->where('chat_id', $chatId)
-                ->where('module_id', SummarizerModuleId::ID)
-                ->lockForUpdate()
-                ->first();
+        $this->settings->patchSettings(SummarizerModuleId::ID, $botId, $chatId, $patch);
 
-            if ($row === null) {
-                $row = new TgModuleEnablement([
-                    'bot_id' => $botId,
-                    'chat_id' => $chatId,
-                    'module_id' => SummarizerModuleId::ID,
-                    'is_enabled' => true,
-                    'module_settings' => [],
-                ]);
-            }
-
-            $current = is_array($row->module_settings) ? $row->module_settings : [];
-            $row->module_settings = array_merge($current, $patch);
-
-            if (array_key_exists('enabled', $patch)) {
-                $row->is_enabled = (bool) $patch['enabled'];
-            }
-
-            $row->save();
-        });
-
-        $this->enablement->refresh($botId, $chatId);
+        // The engine settings adapter's afterWrite hook is not wired in
+        // production, so a reserved `enabled` write would leave the enablement
+        // memo stale for its full TTL (read-your-writes on the toggle path).
+        if (array_key_exists('enabled', $patch)) {
+            $this->enablement->refresh($botId, $chatId);
+        }
     }
 }

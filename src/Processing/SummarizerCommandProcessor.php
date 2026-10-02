@@ -14,6 +14,7 @@ use BAGArt\TelegramBot\Processing\ErrorHandling\ProcessorErrorContext;
 use BAGArt\TelegramBot\TgApi\Methods\DTO\SendMessageMethodDTO;
 use BAGArt\TelegramBot\TgApi\Methods\Enum\ParseModeEnum;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
+use BAGArt\TelegramBotSummarizer\I18n\SummarizerStrings;
 use BAGArt\TelegramBotSummarizer\ModuleFactory;
 use BAGArt\TelegramBotSummarizer\Ui\AdminMenuRenderer;
 use Throwable;
@@ -75,9 +76,13 @@ class SummarizerCommandProcessor implements TgModuleProcessorContract
 
         try {
             if (! ModuleFactory::access()->canManage($botConfig, $chatId, $dto->from)) {
+                $botId = (string) $botConfig->botId;
+                $settings = ModuleFactory::settings()->get($botId, $chatId);
+                $t = fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
+
                 $this->sender->send($botConfig, new SendMessageMethodDTO(
                     chatId: (string) $chatId,
-                    text: "⛔️ The summarizer panel is available to admins who can delete others' messages and to whoever added this bot to the chat.",
+                    text: $t('error.denied'),
                 ));
 
                 return;
@@ -85,13 +90,15 @@ class SummarizerCommandProcessor implements TgModuleProcessorContract
 
             $botId = (string) $botConfig->botId;
             $settings = ModuleFactory::settings()->get($botId, $chatId);
+            $enabled = ModuleFactory::settings()->isEnabled($botId, $chatId);
             $tokens = \BAGArt\TelegramBotSummarizer\Models\SummarizerToken::query()
                 ->where('bot_id', $botId)
                 ->orderByDesc('created_at')
                 ->get()
                 ->all();
 
-            $page = $this->menu->main($chatId, $settings, $tokens);
+            $t = fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
+            $page = $this->menu->main($chatId, $settings, $enabled, $tokens, $t);
 
             $this->sender->send($botConfig, new SendMessageMethodDTO(
                 chatId: (string) $chatId,
@@ -100,9 +107,13 @@ class SummarizerCommandProcessor implements TgModuleProcessorContract
                 replyMarkup: $page['keyboard'],
             ));
         } catch (Throwable $e) {
+            $botId = (string) $botConfig->botId;
+            $settings = ModuleFactory::settings()->get($botId, $chatId);
+            $t = fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
+
             $this->sender->send($botConfig, new SendMessageMethodDTO(
                 chatId: (string) $chatId,
-                text: '⚠️ Summarizer error: '.$e->getMessage(),
+                text: $t('error.summarizer_error', ['message' => $e->getMessage()]),
             ));
         }
     }

@@ -34,29 +34,28 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
     {
         return new TgWebUiManifest(
             moduleId: SummarizerModuleId::ID,
-            title: 'Chat Summarizer',
+            title: 't:summarizer.title',
             icon: '📝',
             kind: UiKind::Setting,
             minAudience: UiAudience::Admin,
-            description: 'Scheduled LLM digests of the chat',
+            description: 't:summarizer.description',
             entry: UiEntry::schema([
-                UiGroup::of('digest', 'Digest', [
-                    UiField::bool('enabled', 'Digests enabled', default: false),
-                    UiField::enum('interval_minutes', 'Interval', options: array_map(
+                UiGroup::of('digest', 't:summarizer.group.digest', [
+                    UiField::enum('interval_minutes', 't:summarizer.field.interval_minutes', options: array_map(
                         static fn (int $minutes): array => ['value' => $minutes, 'label' => self::intervalLabel($minutes)],
                         SummarizerSettings::INTERVAL_CHOICES,
                     ), default: SummarizerSettings::DEFAULT_INTERVAL_MINUTES),
-                    new UiField('min_messages', 'Min messages to trigger', UiFieldType::Int, default: SummarizerSettings::DEFAULT_MIN_MESSAGES, extra: ['min' => 1, 'max' => 5000]),
+                    new UiField('min_messages', 't:summarizer.field.min_messages', UiFieldType::Int, default: SummarizerSettings::DEFAULT_MIN_MESSAGES, extra: ['min' => 1, 'max' => 5000]),
                 ]),
-                UiGroup::of('model', 'Model and style', [
-                    UiField::enum('provider_key', 'LLM provider', options: self::providerOptions(), default: 'openai'),
-                    UiField::enum('template_id', 'Digest style', options: self::templateOptions(), default: 'witty'),
+                UiGroup::of('model', 't:summarizer.group.model', [
+                    UiField::enum('provider_key', 't:summarizer.field.provider_key', options: self::providerOptions(), default: 'openai'),
+                    UiField::enum('template_id', 't:summarizer.field.template_id', options: self::templateOptions(), default: 'witty'),
                 ]),
             ]),
             actions: [
                 new UiAction(
                     id: 'run-now',
-                    label: 'Run digest now',
+                    label: 't:summarizer.action.run_now',
                     minRole: EffectiveRole::Admin,
                 ),
             ],
@@ -69,45 +68,60 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
     public static function translations(): array
     {
         return [
+            'en' => [
+                'title' => 'Chat Summarizer',
+                'description' => 'Scheduled LLM digests of the chat',
+                'group.digest' => 'Digest',
+                'field.interval_minutes' => 'Interval',
+                'field.min_messages' => 'Min messages to trigger',
+                'group.model' => 'Model and style',
+                'field.provider_key' => 'LLM provider',
+                'field.template_id' => 'Digest style',
+                'action.run_now' => 'Run digest now',
+            ],
             'ru' => [
-                'Chat Summarizer' => 'Суммаризатор чата',
-                'Scheduled LLM digests of the chat' => 'Периодические LLM-дайджесты чата',
-                'Digests enabled' => 'Дайджесты включены',
-                'Interval' => 'Интервал',
-                'Min messages to trigger' => 'Мин. сообщений для запуска',
-                'LLM provider' => 'LLM-провайдер',
-                'Digest style' => 'Стиль дайджеста',
-                'Run digest now' => 'Собрать дайджест сейчас',
+                'title' => 'Суммаризатор чата',
+                'description' => 'Периодические LLM-дайджесты чата',
+                'group.digest' => 'Дайджест',
+                'field.interval_minutes' => 'Интервал',
+                'field.min_messages' => 'Мин. сообщений для запуска',
+                'group.model' => 'Модель и стиль',
+                'field.provider_key' => 'LLM-провайдер',
+                'field.template_id' => 'Стиль дайджеста',
+                'action.run_now' => 'Собрать дайджест сейчас',
             ],
             'fr' => [
-                'Chat Summarizer' => 'Résumé de chat',
-                'Scheduled LLM digests of the chat' => 'Digests LLM planifiés du chat',
-                'Digests enabled' => 'Digests activés',
-                'Interval' => 'Intervalle',
-                'Min messages to trigger' => 'Messages minimum pour déclencher',
-                'LLM provider' => 'Fournisseur LLM',
-                'Digest style' => 'Style de digest',
-                'Run digest now' => 'Exécuter le digest maintenant',
+                'title' => 'Résumé de chat',
+                'description' => 'Digests LLM planifiés du chat',
+                'group.digest' => 'Digest',
+                'field.interval_minutes' => 'Intervalle',
+                'field.min_messages' => 'Messages minimum pour déclencher',
+                'group.model' => 'Modèle et style',
+                'field.provider_key' => 'Fournisseur LLM',
+                'field.template_id' => 'Style de digest',
+                'action.run_now' => 'Exécuter le digest maintenant',
             ],
             'es' => [
-                'Chat Summarizer' => 'Resumen de chat',
-                'Scheduled LLM digests of the chat' => 'Digests LLM programados del chat',
-                'Digests enabled' => 'Digests habilitados',
-                'Interval' => 'Intervalo',
-                'Min messages to trigger' => 'Mín. mensajes para activar',
-                'LLM provider' => 'Proveedor LLM',
-                'Digest style' => 'Estilo de digest',
-                'Run digest now' => 'Ejecutar digest ahora',
+                'title' => 'Resumen de chat',
+                'description' => 'Digests LLM programados del chat',
+                'group.digest' => 'Digest',
+                'field.interval_minutes' => 'Intervalo',
+                'field.min_messages' => 'Mín. mensajes para activar',
+                'group.model' => 'Modelo y estilo',
+                'field.provider_key' => 'Proveedor LLM',
+                'field.template_id' => 'Estilo de digest',
+                'action.run_now' => 'Ejecutar digest ahora',
             ],
             'zh' => [
-                'Chat Summarizer' => '聊天摘要',
-                'Scheduled LLM digests of the chat' => '定期LLM聊天摘要',
-                'Digests enabled' => '摘要已启用',
-                'Interval' => '间隔',
-                'Min messages to trigger' => '触发所需最少消息数',
-                'LLM provider' => 'LLM服务商',
-                'Digest style' => '摘要风格',
-                'Run digest now' => '立即生成摘要',
+                'title' => '聊天摘要',
+                'description' => '定期LLM聊天摘要',
+                'group.digest' => '摘要',
+                'field.interval_minutes' => '间隔',
+                'field.min_messages' => '触发所需最少消息数',
+                'group.model' => '模型和风格',
+                'field.provider_key' => 'LLM服务商',
+                'field.template_id' => '摘要风格',
+                'action.run_now' => '立即生成摘要',
             ],
         ];
     }
@@ -115,10 +129,6 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
     public function validate(array $raw): array
     {
         $patch = [];
-
-        if (array_key_exists('enabled', $raw)) {
-            $patch['enabled'] = (bool) $raw['enabled'];
-        }
 
         if (array_key_exists('interval_minutes', $raw)) {
             // Same clamp the DTO applies on read (15 min … 7 days).
@@ -132,7 +142,7 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
         if (array_key_exists('provider_key', $raw)) {
             $providerKey = (string) $raw['provider_key'];
 
-            if (! (new LlmProviderRegistry)->has($providerKey)) {
+            if (! (new LlmProviderRegistry())->has($providerKey)) {
                 throw new InvalidArgumentException('Unknown provider_key value.');
             }
 
@@ -142,7 +152,7 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
         if (array_key_exists('template_id', $raw)) {
             $templateId = (string) $raw['template_id'];
 
-            if (! (new PromptTemplateRegistry)->has($templateId)) {
+            if (! (new PromptTemplateRegistry())->has($templateId)) {
                 throw new InvalidArgumentException('Unknown template_id value.');
             }
 
@@ -154,8 +164,9 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
 
     /**
      * The settings surface never reports needs_setup: a missing LLM key
-     * surfaces as a digest error, not a broken config. Enablement itself is
-     * the `enabled` key — the hub toggle and this field write the same row.
+     * surfaces as a digest error, not a broken config. Enablement is not
+     * part of this form — the in-chat panel (reserved `enabled` patch) and
+     * the hub per-chat toggle own it.
      */
     public function isConfigured(array $settings): bool
     {
@@ -167,7 +178,7 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
     {
         $options = [];
 
-        foreach ((new LlmProviderRegistry)->all() as $preset) {
+        foreach ((new LlmProviderRegistry())->all() as $preset) {
             $options[] = ['value' => $preset->key, 'label' => $preset->name];
         }
 
@@ -179,7 +190,7 @@ final readonly class SummarizerWebUi implements TgSettingsFormContract, TgWebUiC
     {
         $options = [];
 
-        foreach ((new PromptTemplateRegistry)->all() as $template) {
+        foreach ((new PromptTemplateRegistry())->all() as $template) {
             $options[] = ['value' => $template->id, 'label' => $template->name];
         }
 

@@ -24,8 +24,11 @@ use BAGArt\TelegramBotSummarizer\Web\SummarizerWebUi;
  * digests (themes, positions, witty mini-summaries) and ships an in-chat
  * admin panel for interval/provider/token/template management.
  *
- * Disabled by default per chat — nothing is collected until a chat admin
- * enables it via /summarizer.
+ * Chat-scope enablement defaults to OFF (descriptor defaultChatEnabled):
+ * nothing is collected until a chat admin opts in through the /summarizer
+ * panel, whose toggle writes the reserved `enabled` sentinel. Dispatch
+ * entry points (commands, callbacks) run on the bot scope and stay
+ * discoverable in every chat.
  */
 class SummarizerModule implements TgModuleContract
 {
@@ -35,15 +38,17 @@ class SummarizerModule implements TgModuleContract
             id: 'summarizer',
             name: 'Chat Summarizer',
             version: '1.0.0',
+            requiresModules: ['menu' => '*'],
             capabilities: [
                 TgModuleCapability::Processor,
                 TgModuleCapability::Command,
                 TgModuleCapability::Ui,
             ],
-            // The module (menu commands) is discoverable in every chat; actual
-            // collection/digests stay off until the chat admin opts in via
-            // /summarizer (per-chat 'enabled' flag in module_settings).
+            // Bot scope stays discoverable (menu commands, panel); chat scope
+            // defaults to OFF — collection starts only after a chat admin
+            // opts in via /summarizer (reserved `enabled` sentinel).
             defaultEnabled: true,
+            defaultChatEnabled: false,
         );
     }
 

@@ -8,13 +8,20 @@ use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBot\Configs\TgServiceConfig;
 use BAGArt\TelegramBot\Contracts\ApiCommunication\TgBotApiDTOClientContract;
 use BAGArt\TelegramBot\Contracts\Modules\ModuleEnablementContract;
+use BAGArt\TelegramBot\Contracts\Outbound\TgSenderContract;
+use BAGArt\TelegramBot\Processing\BotProcessorContext;
 use BAGArt\TelegramBot\Processing\RegisteredUpdateProcessorSelector;
+use BAGArt\TelegramBot\TgApi\Methods\DTO\SendMessageMethodDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\CallbackQueryTypeDTO;
+use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberLeftTypeDTO;
+use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberMemberTypeDTO;
+use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberUpdatedTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\UpdateTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\UserTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\Enum\ChatPropTypeEnum;
+use BAGArt\TelegramBot\TgBotSetup;
 use BAGArt\TelegramBot\TgBotSetupFactory;
 use BAGArt\TelegramBotManagement\Models\TgBot;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerChatAccess;
@@ -22,9 +29,12 @@ use BAGArt\TelegramBotSummarizer\Models\SummarizerMessage;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerPendingAction;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerToken;
 use BAGArt\TelegramBotSummarizer\ModuleFactory;
+use BAGArt\TelegramBotSummarizer\Processing\SummarizerCommandProcessor;
 use BAGArt\TelegramBotSummarizer\Settings\SummarizerSettingsService;
 use BAGArt\TelegramBotSummarizer\Ui\CallbackRoute;
 use BAGArt\TelegramBotSummarizer\Ui\PendingInputService;
+use BAGArt\TelegramModuleEngine\Activation\ModuleActivationReader;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function () {
     config('telegram.modules');
@@ -36,14 +46,30 @@ beforeEach(function () {
     Cache::put('summarizer:admins:test_bot:-100100', [], 60);
 });
 
-function smSelector(): RegisteredUpdateProcessorSelector
+function smSelector(?TgBotSetup $botSetup = null): RegisteredUpdateProcessorSelector
 {
-    $botSetup = app(TgBotSetupFactory::class)->create(serviceConfig: new TgServiceConfig());
+    $botSetup ??= app(TgBotSetupFactory::class)->create(serviceConfig: new TgServiceConfig());
 
     return new RegisteredUpdateProcessorSelector(
         serviceConfig: new TgServiceConfig(),
         botSetup: $botSetup,
         moduleEnablement: app(ModuleEnablementContract::class),
+    );
+}
+
+/** Selector context with the sender swapped for a spy (assert on sends). */
+function smContext(TgBotSetup $botSetup, TgSenderContract $sender): BotProcessorContext
+{
+    return new BotProcessorContext(
+        logger: $botSetup->logger,
+        tgSender: $sender,
+        tgApiCaller: $botSetup->tgApiCaller,
+        processorRegistry: $botSetup->processorRegistry,
+        serviceConfig: $botSetup->serviceConfig,
+        botSetup: $botSetup,
+        dbLogger: $botSetup->dbLogger,
+        messageRules: $botSetup->messageRules,
+        commandRegistry: $botSetup->commandRegistry,
     );
 }
 
@@ -54,6 +80,8 @@ function smRunUpdate(UpdateTypeDTO $update, TgBotConfig $botConfig): void
             $dto = match ($action) {
                 'message', 'editedMessage', 'channelPost' => $update->message,
                 'callbackQuery' => $update->callbackQuery,
+                'myChatMember' => $update->myChatMember,
+                'chatMember' => $update->chatMember,
                 default => $update->message,
             };
 
@@ -72,7 +100,7 @@ it('discovers the summarizer module', function () {
 });
 
 it('collects group messages once per message id', function () {
-    app(SummarizerSettingsService::class)->patch('test_bot', -100100, ['enabled' => true]);
+    smOptInChat('test_bot', -100100);
 
     smRunUpdate(new UpdateTypeDTO(updateId: 1, message: smGroupMessage(-100100, 42, 'hello there')), smBotConfig());
     // same message delivered again (at-least-once webhook) — must not duplicate
@@ -82,24 +110,55 @@ it('collects group messages once per message id', function () {
         ->and(SummarizerMessage::query()->sole()->text)->toBe('hello there');
 });
 
-it('does not collect when the module is disabled for the chat', function () {
+it('does not collect in a fresh chat that has not opted in', function () {
     smRunUpdate(new UpdateTypeDTO(updateId: 1, message: smGroupMessage(-100100, 42, 'private thought')), smBotConfig());
 
-    expect(SummarizerMessage::query()->count())->toBe(0);
+    expect(SummarizerMessage::query()->count())->toBe(0)
+        ->and(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100100))->toBeFalse();
 });
 
-it('records the inviter from new-chat-members service messages', function () {
+it('collects only in the opted-in sibling chat of the same bot', function () {
+    smOptInChat('test_bot', -100100);
+
+    // A chat-scoped settings write materializes the bot row with status=enabled;
+    // a sibling chat without an explicit override must still resolve to OFF.
+    app(SummarizerSettingsService::class)->patch('test_bot', -100200, ['interval_minutes' => 60]);
+
+    smRunUpdate(new UpdateTypeDTO(updateId: 20, message: smGroupMessage(-100100, 42, 'for A')), smBotConfig());
+    smRunUpdate(new UpdateTypeDTO(updateId: 21, message: smGroupMessage(-100200, 42, 'for B')), smBotConfig());
+
+    expect(DB::table('bot_module_activations')->where('bot_id', 'test_bot')->where('module_id', 'summarizer')->value('status'))
+        ->toBe(ModuleActivationReader::STATUS_ENABLED)
+        ->and(SummarizerMessage::query()->where('chat_id', -100100)->count())->toBe(1)
+        ->and(SummarizerMessage::query()->where('chat_id', -100200)->count())->toBe(0)
+        ->and(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100100))->toBeTrue()
+        ->and(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100200))->toBeFalse();
+});
+
+it('keeps a bot-level activation from turning a fresh chat on', function () {
+    smSeedBotActivation('test_bot');
+
+    expect(app(ModuleEnablementContract::class)->isEnabled('summarizer', 'test_bot', null))->toBeTrue();
+
+    smRunUpdate(new UpdateTypeDTO(updateId: 22, message: smGroupMessage(-100100, 42, 'bot toggle only')), smBotConfig());
+
+    expect(SummarizerMessage::query()->count())->toBe(0)
+        ->and(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100100))->toBeFalse();
+});
+
+it('records the inviter from my_chat_member service updates', function () {
     app()->instance(TgBotApiDTOClientContract::class, smFakeApiClient(result: smBotUser()));
 
-    $message = new MessageTypeDTO(
-        messageId: 77,
-        date: time(),
+    $update = new ChatMemberUpdatedTypeDTO(
         chat: new ChatTypeDTO(id: '-100100', type: ChatPropTypeEnum::SUPERGROUP),
         from: smUser(42),
-        newChatMembers: [smBotUser()],
+        date: time(),
+        oldChatMember: new ChatMemberLeftTypeDTO(user: smBotUser()),
+        newChatMember: new ChatMemberMemberTypeDTO(user: smBotUser()),
     );
 
-    smRunUpdate(new UpdateTypeDTO(updateId: 3, message: $message), smBotConfig());
+    // dispatches on BOT scope (D1) — this chat never opted in
+    smRunUpdate(new UpdateTypeDTO(updateId: 3, myChatMember: $update), smBotConfig());
 
     expect(SummarizerChatAccess::query()->where('inviter_tg_id', 42)->exists())->toBeTrue();
 
@@ -110,7 +169,7 @@ it('records the inviter from new-chat-members service messages', function () {
 });
 
 it('consumes pasted tokens through the pending-input flow', function () {
-    app(SummarizerSettingsService::class)->patch('test_bot', -100100, ['enabled' => true]);
+    smOptInChat('test_bot', -100100);
     ModuleFactory::pending()->start('test_bot', -100100, 42, PendingInputService::ACTION_TOKEN, ['provider_key' => 'openai']);
 
     smRunUpdate(
@@ -136,7 +195,7 @@ it('consumes pasted tokens through the pending-input flow', function () {
 });
 
 it('denies the panel to users without manage rights', function () {
-    app(SummarizerSettingsService::class)->patch('test_bot', -100100, ['enabled' => true]);
+    smOptInChat('test_bot', -100100);
 
     $command = new MessageTypeDTO(
         messageId: 90,
@@ -150,6 +209,46 @@ it('denies the panel to users without manage rights', function () {
 
     expect(SummarizerToken::query()->count())->toBe(0)
         ->and(app(SummarizerSettingsService::class)->get('test_bot', -100100)->intervalMinutes)->toBe(360);
+});
+
+it('dispatches /summarizer in a fresh chat and renders the panel', function () {
+    // manage rights for the caller without a Telegram API round-trip
+    SummarizerChatAccess::create([
+        'bot_id' => 'test_bot',
+        'chat_id' => -100100,
+        'inviter_tg_id' => 42,
+        'invited_at' => time(),
+    ]);
+
+    $command = new MessageTypeDTO(
+        messageId: 91,
+        date: time(),
+        chat: new ChatTypeDTO(id: '-100100', type: ChatPropTypeEnum::SUPERGROUP),
+        from: smUser(42),
+        text: '/summarizer',
+    );
+    $botConfig = smBotConfig();
+    $botSetup = app(TgBotSetupFactory::class)->create(serviceConfig: new TgServiceConfig());
+
+    // D1: the command dispatches on BOT scope, the chat never opted in
+    $dispatched = [];
+    foreach (smSelector($botSetup)->selectProcessors(new UpdateTypeDTO(updateId: 10, message: $command), $botConfig) as $processors) {
+        foreach ($processors as $processor) {
+            $dispatched[] = $processor::class;
+        }
+    }
+
+    expect($dispatched)->toContain(SummarizerCommandProcessor::class)
+        ->and(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100100))->toBeFalse();
+
+    $spy = smSenderSpy();
+    SummarizerCommandProcessor::build(smContext($botSetup, $spy))->process($command, $botConfig);
+
+    $messages = array_values(array_filter($spy->sent, static fn ($dto): bool => $dto instanceof SendMessageMethodDTO));
+
+    expect($messages)->toHaveCount(1)
+        ->and($messages[0]->text)->toContain('Chat Summarizer')
+        ->and($messages[0]->replyMarkup)->not->toBeNull();
 });
 
 it('enables the module from an inline-keyboard press of an inviter', function () {
@@ -169,6 +268,9 @@ it('enables the module from an inline-keyboard press of an inviter', function ()
 
     smRunUpdate(new UpdateTypeDTO(updateId: 6, callbackQuery: $query), smBotConfig());
 
+    // the dispatch memoized the pre-patch decision — drop it before asserting
+    app(ModuleEnablementContract::class)->refresh('test_bot', -100100);
+
     expect(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100100))->toBeTrue();
 });
 
@@ -183,12 +285,12 @@ it('denies inline-keyboard presses from users without manage rights', function (
     smRunUpdate(new UpdateTypeDTO(updateId: 7, callbackQuery: $query), smBotConfig());
 
     // the unauthorized press must leave no enablement/settings trace
-    expect(BAGArt\TelegramBotManagement\Models\TgModuleEnablement::query()->count())->toBe(0)
-        ->and(app(SummarizerSettingsService::class)->get('test_bot', -100100)->enabled)->toBeFalse();
+    expect(DB::table('bot_module_activations')->where('bot_id', 'test_bot')->where('module_id', 'summarizer')->count())->toBe(0)
+        ->and(app(SummarizerSettingsService::class)->isEnabled('test_bot', -100100))->toBeFalse();
 });
 
 it('enforces single-owner token deletion while superadmins may delete any', function () {
-    app(SummarizerSettingsService::class)->patch('test_bot', -100100, ['enabled' => true]);
+    smOptInChat('test_bot', -100100);
 
     $foreign = SummarizerToken::create([
         'bot_id' => 'test_bot',

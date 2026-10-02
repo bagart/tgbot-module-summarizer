@@ -21,6 +21,8 @@ class PendingInputService
 
     public const ACTION_MIN_MESSAGES = 'min_messages';
 
+    public const ACTION_MODEL = 'model_input';
+
     public function __construct(
         private readonly int $ttlMinutes,
     ) {

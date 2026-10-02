@@ -49,10 +49,8 @@ function smRunner(TgSenderContract $sender): DigestRunner
 
 function smEnabledChatWithToken(): void
 {
-    app(SummarizerSettingsService::class)->patch('test_bot', -100100, [
-        'enabled' => true,
-        'provider_key' => 'openai',
-    ]);
+    smOptInChat('test_bot', -100100);
+    app(SummarizerSettingsService::class)->patch('test_bot', -100100, ['provider_key' => 'openai']);
 
     $token = SummarizerToken::create([
         'bot_id' => 'test_bot',
@@ -167,7 +165,7 @@ it('skips chats below the message threshold without touching the LLM', function 
 it('refuses to run without an active token', function () {
     Http::fake();
 
-    app(SummarizerSettingsService::class)->patch('test_bot', -100100, ['enabled' => true]);
+    smOptInChat('test_bot', -100100);
 
     foreach (range(1, 12) as $i) {
         SummarizerMessage::factory()->inChat('test_bot', -100100)->create(['message_id' => $i]);

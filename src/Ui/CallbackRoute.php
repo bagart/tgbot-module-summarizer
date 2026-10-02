@@ -49,6 +49,18 @@ final class CallbackRoute
 
     public const VERB_CLOSE = 'x';
 
+    public const VERB_PAGE_MODELS = 'pmdl';
+
+    public const VERB_SET_MODEL = 'mdl';
+
+    public const VERB_CUSTOM_MODEL = 'mdlc';
+
+    public const VERB_PAGE_HISTORY = 'phst';
+
+    public const VERB_HISTORY_PAGE = 'hpg';
+
+    public const VERB_HISTORY_VIEW = 'hvw';
+
     public static function encode(int $chatId, string $verb, ?string $arg = null): string
     {
         $data = self::PREFIX.':'.$chatId.':'.$verb;

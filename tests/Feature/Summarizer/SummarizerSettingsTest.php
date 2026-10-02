@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 require_once __DIR__.'/helpers.php';
 
+use BAGArt\TelegramBot\Contracts\Modules\ModuleEnablementContract;
+use BAGArt\TelegramBot\Contracts\Modules\ModuleSettingsContract;
 use BAGArt\TelegramBotManagement\Models\TgBot;
 use BAGArt\TelegramBotSummarizer\Settings\SummarizerSettingsService;
 
@@ -15,18 +17,19 @@ beforeEach(function () {
 });
 
 it('applies defaults when no enablement rows exist', function () {
-    $settings = app(SummarizerSettingsService::class)->get('bot_x', 100);
+    $service = app(SummarizerSettingsService::class);
+    $settings = $service->get('bot_x', 100);
 
-    expect($settings->enabled)->toBeFalse()
-        ->and($settings->intervalMinutes)->toBe(360)
+    expect($settings->intervalMinutes)->toBe(360)
         ->and($settings->providerKey)->toBe('openai')
         ->and($settings->activeTokenId)->toBeNull()
         ->and($settings->templateId)->toBe('witty')
         ->and($settings->customTemplate)->toBeNull()
         ->and($settings->minMessages)->toBe(10)
         ->and($settings->customProvider)->toBeNull()
-        // module discovery is always on; the per-chat flag is what stays off
-        ->and(app(SummarizerSettingsService::class)->isEnabled('bot_x', 100))->toBeTrue();
+        // fresh chat = OFF (descriptor chat default); bot scope stays discoverable
+        ->and($service->isEnabled('bot_x', 100))->toBeFalse()
+        ->and(app(ModuleEnablementContract::class)->isEnabled('summarizer', 'bot_x', null))->toBeTrue();
 });
 
 it('persists chat-level patches and reflects them back', function () {
@@ -45,19 +48,25 @@ it('persists chat-level patches and reflects them back', function () {
         ->and($settings->customTemplate)->toBe('Custom instructions {period}');
 });
 
-it('toggles module enablement together with settings', function () {
+it('round-trips chat enablement through the reserved enabled patch', function () {
     $service = app(SummarizerSettingsService::class);
     $botId = 'bot_x';
     $chatId = 100;
 
-    // discovered by default (no explicit row yet)
-    expect($service->isEnabled($botId, $chatId))->toBeTrue();
+    expect($service->isEnabled($botId, $chatId))->toBeFalse();
 
+    // read-your-writes: patch() invalidates the enablement memo itself
     $service->patch($botId, $chatId, ['enabled' => true]);
     expect($service->isEnabled($botId, $chatId))->toBeTrue();
 
-    $service->patch($botId, $chatId, ['enabled' => false]);
+    smOptOutChat($botId, $chatId);
     expect($service->isEnabled($botId, $chatId))->toBeFalse();
+
+    $raw = app(ModuleSettingsContract::class)->settingsFor('summarizer', $botId, $chatId);
+
+    expect($raw)->not->toHaveKey('enabled')
+        ->and($raw)->not->toHaveKey('__enabled__')
+        ->and($raw)->not->toHaveKey(smChatKey($chatId));
 });
 
 it('keeps chat scopes isolated', function () {

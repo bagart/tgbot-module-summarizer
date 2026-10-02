@@ -17,6 +17,25 @@ class LlmProviderRegistry
     /** @var array<string, LlmProviderPreset> */
     private array $presets;
 
+    /**
+     * Curated model lists per provider key for the admin model picker.
+     * The first entry is the default (preset) model.
+     *
+     * @var array<string, list<string>>
+     */
+    private const MODEL_LISTS = [
+        'openai' => ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
+        'anthropic' => ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest', 'claude-3-opus-latest'],
+        'google' => ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+        'deepseek' => ['deepseek-chat', 'deepseek-reasoner'],
+        'mistral' => ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest'],
+        'groq' => ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+        'xai' => ['grok-3-mini', 'grok-3', 'grok-2'],
+        'openrouter' => ['openrouter/auto'],
+        'together' => ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo'],
+        'ollama' => ['llama3.1', 'mistral', 'codellama', 'qwen2.5'],
+    ];
+
     public function __construct()
     {
         $presets = [
@@ -52,6 +71,17 @@ class LlmProviderRegistry
     public function get(string $key): ?LlmProviderPreset
     {
         return $this->presets[$key] ?? null;
+    }
+
+    /**
+     * Curated model list for the given provider key. Returns an empty array
+     * for unknown keys (the admin can still type a custom model string).
+     *
+     * @return list<string>
+     */
+    public function modelsFor(string $providerKey): array
+    {
+        return self::MODEL_LISTS[$providerKey] ?? [];
     }
 
     /**

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBot\Contracts\ApiCommunication\TgBotApiDTOClientContract;
+use BAGArt\TelegramBot\Contracts\Modules\ModuleEnablementContract;
+use BAGArt\TelegramBot\Contracts\Modules\ModuleSettingsContract;
 use BAGArt\TelegramBot\Contracts\Outbound\TgSenderContract;
 use BAGArt\TelegramBot\Contracts\TgApi\TgApiMethodDTOContract;
 use BAGArt\TelegramBot\Http\Pure\TgApiResponse;
@@ -13,6 +15,8 @@ use BAGArt\TelegramBot\TgApi\Types\Enum\ChatPropTypeEnum;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\UserTypeDTO;
+use BAGArt\TelegramModuleEngine\Activation\ModuleActivationReader;
+use Illuminate\Support\Facades\DB;
 
 /*
  * Shared fixtures for Summarizer module tests.
@@ -116,4 +120,36 @@ function smAdminMember(int $tgId, bool $canDelete): ChatMemberAdministratorTypeD
 function smOwnerMember(int $tgId): ChatMemberOwnerTypeDTO
 {
     return new ChatMemberOwnerTypeDTO(user: smUser($tgId), isAnonymous: false);
+}
+
+/** Raw module_settings key holding the per-chat enablement override. */
+function smChatKey(int $chatId): string
+{
+    return $chatId.':'.ModuleActivationReader::CHAT_ENABLED_KEY;
+}
+
+/** @param  array<string, mixed>  $settings  raw module_settings payload (chat keys included) */
+function smSeedBotActivation(string $botId, string $status = ModuleActivationReader::STATUS_ENABLED, array $settings = []): void
+{
+    DB::table('bot_module_activations')->insert([
+        'bot_id' => $botId,
+        'module_id' => 'summarizer',
+        'status' => $status,
+        'revision' => 1,
+        'module_settings' => $settings === [] ? null : json_encode($settings, JSON_THROW_ON_ERROR),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+}
+
+function smOptInChat(string $botId, int $chatId): void
+{
+    app(ModuleSettingsContract::class)->patchSettings('summarizer', $botId, $chatId, ['enabled' => true]);
+    app(ModuleEnablementContract::class)->refresh($botId, $chatId);
+}
+
+function smOptOutChat(string $botId, int $chatId): void
+{
+    app(ModuleSettingsContract::class)->patchSettings('summarizer', $botId, $chatId, ['enabled' => false]);
+    app(ModuleEnablementContract::class)->refresh($botId, $chatId);
 }

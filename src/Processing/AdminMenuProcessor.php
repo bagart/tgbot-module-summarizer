@@ -13,7 +13,9 @@ use BAGArt\TelegramBot\Processing\ErrorHandling\ProcessorErrorContext;
 use BAGArt\TelegramBot\TgApi\Methods\DTO\AnswerCallbackQueryMethodDTO;
 use BAGArt\TelegramBot\TgApi\Methods\DTO\SendMessageMethodDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\CallbackQueryTypeDTO;
+use BAGArt\TelegramBotSummarizer\I18n\SummarizerStrings;
 use BAGArt\TelegramBotSummarizer\Llm\LlmProviderRegistry;
+use BAGArt\TelegramBotSummarizer\Models\SummarizerRun;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerToken;
 use BAGArt\TelegramBotSummarizer\ModuleFactory;
 use BAGArt\TelegramBotSummarizer\Prompt\PromptTemplateRegistry;
@@ -90,9 +92,11 @@ class AdminMenuProcessor implements TgModuleProcessorContract
 
         try {
             if (! ModuleFactory::access()->canManage($botConfig, $chatId, $dto->from)) {
+                $settings = $this->settings->get($botId, $chatId);
+                $t = $this->makeTranslator($settings);
                 $this->answer(
                     $dto,
-                    'Only chat admins who can delete others\' messages or the user who added the bot may open this panel.',
+                    $t('error.denied_callback'),
                     alert: true,
                 );
 
@@ -101,7 +105,9 @@ class AdminMenuProcessor implements TgModuleProcessorContract
 
             $this->dispatchVerb($dto, $botConfig, $chatId, $verb, $arg);
         } catch (Throwable $e) {
-            $this->answer($botConfig, $dto, 'Menu error: '.$e->getMessage(), alert: true);
+            $settings = $this->settings->get($botId, $chatId);
+            $t = $this->makeTranslator($settings);
+            $this->answer($botConfig, $dto, $t('error.menu_error', ['message' => $e->getMessage()]), alert: true);
         }
     }
 
@@ -112,43 +118,50 @@ class AdminMenuProcessor implements TgModuleProcessorContract
         string $verb,
         ?string $arg,
     ): void {
+        $botId = (string) $botConfig->botId;
+        $settings = $this->settings->get($botId, $chatId);
+        $enabled = $this->settings->isEnabled($botId, $chatId);
+        $t = $this->makeTranslator($settings);
+
         switch ($verb) {
             case CallbackRoute::VERB_MENU:
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->main($chatId, $s, $t));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->main($chatId, $s, $enabled, $tk, $t));
                 $this->answer($botConfig, $query);
 
                 return;
 
             case CallbackRoute::VERB_PAGE_INTERVALS:
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->intervals($chatId, $s));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->intervals($chatId, $s, $t));
                 $this->answer($botConfig, $query);
 
                 return;
 
             case CallbackRoute::VERB_PAGE_PROVIDERS:
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->providers($chatId, $s));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->providers($chatId, $s, $t));
                 $this->answer($botConfig, $query);
 
                 return;
 
             case CallbackRoute::VERB_PAGE_TOKENS:
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->tokens($chatId, $s, $t));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->tokens($chatId, $s, $tk, $t));
                 $this->answer($botConfig, $query);
 
                 return;
 
             case CallbackRoute::VERB_PAGE_TEMPLATES:
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->templates($chatId, $s));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->templates($chatId, $s, $t));
                 $this->answer($botConfig, $query);
 
                 return;
 
             case CallbackRoute::VERB_ENABLE:
             case CallbackRoute::VERB_DISABLE:
+                // Reassigns the flag read at dispatchVerb entry: after this
+                // reserved-key write $enabled is the post-toggle state.
                 $enabled = $verb === CallbackRoute::VERB_ENABLE;
-                $this->settings->patch((string) $botConfig->botId, $chatId, ['enabled' => $enabled]);
-                $this->answer($botConfig, $query, $enabled ? 'Enabled' : 'Disabled');
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->main($chatId, $s, $t));
+                $this->settings->patch($botId, $chatId, ['enabled' => $enabled]);
+                $this->answer($botConfig, $query, $enabled ? $t('confirm.enabled') : $t('confirm.disabled'));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->main($chatId, $s, $enabled, $tk, $t));
 
                 return;
 
@@ -156,39 +169,39 @@ class AdminMenuProcessor implements TgModuleProcessorContract
                 $minutes = (int) $arg;
 
                 if (! in_array($minutes, [30, 60, 120, 180, 360, 720, 1440], true)) {
-                    $this->answer($botConfig, $query, 'Unknown interval', alert: true);
+                    $this->answer($botConfig, $query, $t('error.unknown_interval'), alert: true);
 
                     return;
                 }
 
-                $this->settings->patch((string) $botConfig->botId, $chatId, ['interval_minutes' => $minutes]);
-                $this->answer($botConfig, $query, 'Interval updated');
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->intervals($chatId, $s));
+                $this->settings->patch($botId, $chatId, ['interval_minutes' => $minutes]);
+                $this->answer($botConfig, $query, $t('confirm.interval_updated'));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->intervals($chatId, $s, $t));
 
                 return;
 
             case CallbackRoute::VERB_SET_PROVIDER:
-                $this->selectProvider($query, $botConfig, $chatId, (string) $arg);
+                $this->selectProvider($query, $botConfig, $chatId, (string) $arg, $t);
 
                 return;
 
             case CallbackRoute::VERB_CUSTOM_PROVIDER:
-                $this->startCustomProviderEditor($query, $botConfig, $chatId);
+                $this->startCustomProviderEditor($query, $botConfig, $chatId, $t);
 
                 return;
 
             case CallbackRoute::VERB_ADD_TOKEN:
-                $this->startTokenInput($query, $botConfig, $chatId, (string) $arg);
+                $this->startTokenInput($query, $botConfig, $chatId, (string) $arg, $t);
 
                 return;
 
             case CallbackRoute::VERB_SELECT_TOKEN:
-                $this->selectToken($query, $botConfig, $chatId, (string) $arg);
+                $this->selectToken($query, $botConfig, $chatId, (string) $arg, $t);
 
                 return;
 
             case CallbackRoute::VERB_DELETE_TOKEN:
-                $this->deleteToken($query, $botConfig, $chatId, (string) $arg);
+                $this->deleteToken($query, $botConfig, $chatId, (string) $arg, $t);
 
                 return;
 
@@ -196,63 +209,97 @@ class AdminMenuProcessor implements TgModuleProcessorContract
                 $templates = new PromptTemplateRegistry();
 
                 if (! $templates->has((string) $arg)) {
-                    $this->answer($botConfig, $query, 'Unknown template', alert: true);
+                    $this->answer($botConfig, $query, $t('error.unknown_template'), alert: true);
 
                     return;
                 }
 
-                $this->settings->patch((string) $botConfig->botId, $chatId, ['template_id' => (string) $arg, 'custom_template' => null]);
-                $this->answer($botConfig, $query, 'Template updated');
-                $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->templates($chatId, $s));
+                $this->settings->patch($botId, $chatId, ['template_id' => (string) $arg, 'custom_template' => null]);
+                $this->answer($botConfig, $query, $t('confirm.template_updated'));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->templates($chatId, $s, $t));
 
                 return;
 
             case CallbackRoute::VERB_CUSTOM_TEMPLATE:
                 ModuleFactory::pending()->start(
-                    (string) $botConfig->botId,
+                    $botId,
                     $chatId,
                     (int) $query->from->id,
                     PendingInputService::ACTION_TEMPLATE,
                 );
-                $this->answer($botConfig, $query, 'Waiting for template text');
+                $this->answer($botConfig, $query, $t('confirm.digest_started'));
                 $this->sendText($botConfig, $chatId, implode("\n", [
-                    "✍️ <b>Custom template</b>",
-                    "Send the instruction block for the LLM as your next message.",
-                    "Placeholders available: <code>{period}</code>, <code>{stats}</code>, <code>{language}</code>.",
-                    "The safety preamble and transcript delimiters are always enforced and cannot be overridden.",
-                    "Cancel: /summarizer_cancel",
+                    $t('input.custom_template_title'),
+                    $t('input.custom_template_ask'),
+                    $t('input.custom_template_placeholders'),
+                    $t('input.custom_template_preamble_note'),
+                    $t('input.cancel_hint'),
                 ]));
 
                 return;
 
             case CallbackRoute::VERB_MIN_MESSAGES:
                 ModuleFactory::pending()->start(
-                    (string) $botConfig->botId,
+                    $botId,
                     $chatId,
                     (int) $query->from->id,
                     PendingInputService::ACTION_MIN_MESSAGES,
                 );
-                $this->answer($botConfig, $query, 'Waiting for a number');
-                $this->sendText($botConfig, $chatId, "🔢 Send the minimum number of messages for a digest to trigger (1–5000).\nCancel: /summarizer_cancel");
+                $this->answer($botConfig, $query, $t('confirm.digest_started'));
+                $this->sendText($botConfig, $chatId, $t('input.min_messages_ask')."\n".$t('input.cancel_hint'));
 
                 return;
 
             case CallbackRoute::VERB_RUN_NOW:
-                $this->answer($botConfig, $query, 'Digest started…');
+                $this->answer($botConfig, $query, $t('confirm.digest_started'));
                 $outcome = ModuleFactory::digestRunner($this->sender)->run($botConfig, $chatId);
                 $this->sendText($botConfig, $chatId, $outcome->isSuccess()
-                    ? sprintf('✅ Digest posted (%d messages analyzed).', $outcome->messageCount)
-                    : sprintf('⚠️ Digest not produced: %s', $outcome->error ?? 'unknown reason'));
+                    ? $t('digest.posted', ['count' => (string) $outcome->messageCount])
+                    : $t('digest.not_produced', ['reason' => $outcome->error ?? 'unknown reason']));
+
+                return;
+
+            case CallbackRoute::VERB_PAGE_MODELS:
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->models($chatId, $s, $t));
+                $this->answer($botConfig, $query);
+
+                return;
+
+            case CallbackRoute::VERB_SET_MODEL:
+                $this->setModel($query, $botConfig, $chatId, $arg, $t);
+
+                return;
+
+            case CallbackRoute::VERB_CUSTOM_MODEL:
+                $this->startCustomModelInput($query, $botConfig, $chatId, $t);
+
+                return;
+
+            case CallbackRoute::VERB_PAGE_HISTORY:
+                $this->renderHistoryPage($botConfig, $chatId, 1, $t);
+                $this->answer($botConfig, $query);
+
+                return;
+
+            case CallbackRoute::VERB_HISTORY_PAGE:
+                $page = max(1, (int) ($arg ?? 1));
+                $this->renderHistoryPage($botConfig, $chatId, $page, $t);
+                $this->answer($botConfig, $query);
+
+                return;
+
+            case CallbackRoute::VERB_HISTORY_VIEW:
+                $this->showHistoryEntry($query, $botConfig, $chatId, (string) $arg, $t);
 
                 return;
 
             case CallbackRoute::VERB_CLOSE:
-                $this->answer($botConfig, $query, 'Closed');
+                $this->answer($botConfig, $query, $t('confirm.closed'));
 
                 return;
 
             default:
-                $this->answer($botConfig, $query, 'Unsupported action', alert: true);
+                $this->answer($botConfig, $query, $t('error.unsupported_action'), alert: true);
         }
     }
 
@@ -275,13 +322,16 @@ class AdminMenuProcessor implements TgModuleProcessorContract
         ));
     }
 
-    private function selectProvider(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $key): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function selectProvider(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $key, callable $t): void
     {
         $providers = new LlmProviderRegistry();
         $botId = (string) $botConfig->botId;
 
         if (! $providers->has($key)) {
-            $this->answer($botConfig, $query, 'Unknown provider', alert: true);
+            $this->answer($botConfig, $query, $t('error.unknown_provider'), alert: true);
 
             return;
         }
@@ -295,14 +345,17 @@ class AdminMenuProcessor implements TgModuleProcessorContract
         }
 
         $this->settings->patch($botId, $chatId, $patch);
-        $this->answer($botConfig, $query, 'Provider selected');
-        $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->providers($chatId, $s));
+        $this->answer($botConfig, $query, $t('confirm.provider_selected'));
+        $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->providers($chatId, $s, $t));
     }
 
-    private function startCustomProviderEditor(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function startCustomProviderEditor(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, callable $t): void
     {
         ModuleFactory::pending()->start(
-            (string) $botConfig->botId,
+            (string) $query->data !== null ? CallbackRoute::decode($query->data)['chatId'] ?? '' : '',
             $chatId,
             (int) $query->from->id,
             PendingInputService::ACTION_PROVIDER_JSON,
@@ -310,21 +363,24 @@ class AdminMenuProcessor implements TgModuleProcessorContract
 
         $templateJson = ModuleFactory::providers()->customTemplateJson();
 
-        $this->answer($botConfig, $query, 'Waiting for provider JSON');
+        $this->answer($botConfig, $query, $t('confirm.digest_started'));
         $this->sendText($botConfig, $chatId, implode("\n", [
-            "🛠 <b>Custom provider</b>",
-            "Edit this JSON and send it back as your next message:",
-            "<pre>".htmlspecialchars($templateJson).'</pre>',
-            "http base_url is allowed only for local addresses. Cancel: /summarizer_cancel",
+            $t('input.custom_provider_title'),
+            $t('input.custom_provider_ask'),
+            '<pre>'.htmlspecialchars($templateJson).'</pre>',
+            $t('input.custom_provider_ssrf_note'),
         ]));
     }
 
-    private function startTokenInput(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $providerKey): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function startTokenInput(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $providerKey, callable $t): void
     {
         $providers = new LlmProviderRegistry();
 
         if (! $providers->has($providerKey)) {
-            $this->answer($botConfig, $query, 'Unknown provider', alert: true);
+            $this->answer($botConfig, $query, $t('error.unknown_provider'), alert: true);
 
             return;
         }
@@ -339,22 +395,25 @@ class AdminMenuProcessor implements TgModuleProcessorContract
             ['provider_key' => $providerKey],
         );
 
-        $this->answer($botConfig, $query, 'Waiting for the key');
+        $this->answer($botConfig, $query, $t('confirm.digest_started'));
         $this->sendText($botConfig, $chatId, implode("\n", [
-            sprintf('🔑 Send the %s API key as your next message.', $preset?->name ?? $providerKey),
-            'It will be stored encrypted and deleted from the chat immediately.',
-            'Only the first 4 and last 4 characters are ever displayed afterwards.',
-            'Cancel: /summarizer_cancel',
+            $t('input.token_ask', ['provider' => $preset?->name ?? $providerKey]),
+            $t('input.token_stored_hint'),
+            $t('input.token_mask_hint'),
+            $t('input.cancel_hint'),
         ]));
     }
 
-    private function selectToken(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $tokenId): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function selectToken(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $tokenId, callable $t): void
     {
         $botId = (string) $botConfig->botId;
         $token = $this->findToken($botId, $tokenId);
 
         if ($token === null) {
-            $this->answer($botConfig, $query, 'Token not found', alert: true);
+            $this->answer($botConfig, $query, $t('error.token_not_found'), alert: true);
 
             return;
         }
@@ -364,18 +423,21 @@ class AdminMenuProcessor implements TgModuleProcessorContract
             'provider_key' => $token->provider_key,
         ]);
 
-        $this->answer($botConfig, $query, 'Active token set');
-        $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->tokens($chatId, $s, $t));
+        $this->answer($botConfig, $query, $t('confirm.token_active_set'));
+        $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->tokens($chatId, $s, $tk, $t));
     }
 
-    private function deleteToken(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $tokenId): void
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function deleteToken(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $tokenId, callable $t): void
     {
         $botId = (string) $botConfig->botId;
         $access = ModuleFactory::access();
         $token = $this->findToken($botId, $tokenId);
 
         if ($token === null) {
-            $this->answer($botConfig, $query, 'Token not found', alert: true);
+            $this->answer($botConfig, $query, $t('error.token_not_found'), alert: true);
 
             return;
         }
@@ -383,7 +445,7 @@ class AdminMenuProcessor implements TgModuleProcessorContract
         $isOwner = (int) $token->created_by_tg_id === (int) $query->from->id;
 
         if (! $isOwner && ! $access->isSuperadmin($query->from->id)) {
-            $this->answer($botConfig, $query, 'You can delete only tokens you added (superadmins excepted).', alert: true);
+            $this->answer($botConfig, $query, $t('error.token_delete_forbidden'), alert: true);
 
             return;
         }
@@ -395,8 +457,8 @@ class AdminMenuProcessor implements TgModuleProcessorContract
             $this->settings->patch($botId, $chatId, ['active_token_id' => null]);
         }
 
-        $this->answer($botConfig, $query, 'Token deleted');
-        $this->renderPage($botConfig, $chatId, fn ($s, $t) => $this->menu->tokens($chatId, $s, $t));
+        $this->answer($botConfig, $query, $t('confirm.token_deleted'));
+        $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->tokens($chatId, $s, $tk, $t));
     }
 
     /**
@@ -437,6 +499,131 @@ class AdminMenuProcessor implements TgModuleProcessorContract
             text: $text,
             parseMode: \BAGArt\TelegramBot\TgApi\Methods\Enum\ParseModeEnum::HTML,
         ));
+    }
+
+    private function makeTranslator(\BAGArt\TelegramBotSummarizer\Settings\SummarizerSettings $settings): callable
+    {
+        return fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
+    }
+
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function setModel(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, ?string $model, callable $t): void
+    {
+        $botId = (string) $botConfig->botId;
+        $providers = new LlmProviderRegistry();
+        $settings = $this->settings->get($botId, $chatId);
+        $models = $providers->modelsFor($settings->providerKey);
+
+        if ($model === '__reset__') {
+            $this->settings->patch($botId, $chatId, ['model_override' => null]);
+            $this->answer($botConfig, $query, $t('confirm.model_reset'));
+            $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->models($chatId, $s, $t));
+
+            return;
+        }
+
+        if ($model === null || $model === '') {
+            $this->answer($botConfig, $query, $t('error.unknown_model'), alert: true);
+
+            return;
+        }
+
+        $this->settings->patch($botId, $chatId, ['model_override' => $model]);
+        $this->answer($botConfig, $query, $t('confirm.model_selected'));
+        $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->models($chatId, $s, $t));
+    }
+
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function startCustomModelInput(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, callable $t): void
+    {
+        $botId = (string) $botConfig->botId;
+
+        ModuleFactory::pending()->start(
+            $botId,
+            $chatId,
+            (int) $query->from->id,
+            PendingInputService::ACTION_MODEL,
+        );
+
+        $this->answer($botConfig, $query, $t('confirm.digest_started'));
+        $this->sendText($botConfig, $chatId, implode("\n", [
+            $t('input.custom_model_title'),
+            $t('input.custom_model_ask'),
+            $t('input.cancel_hint'),
+        ]));
+    }
+
+    private const HISTORY_PAGE_SIZE = 10;
+
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function renderHistoryPage(TgBotConfig $botConfig, int $chatId, int $page, callable $t): void
+    {
+        $botId = (string) $botConfig->botId;
+        $settings = $this->settings->get($botId, $chatId);
+        $t = $this->makeTranslator($settings);
+
+        $total = SummarizerRun::query()
+            ->where('bot_id', $botId)
+            ->where('chat_id', $chatId)
+            ->count();
+
+        $totalPages = max(1, (int) ceil($total / self::HISTORY_PAGE_SIZE));
+        $page = max(1, min($page, $totalPages));
+
+        $runs = SummarizerRun::query()
+            ->where('bot_id', $botId)
+            ->where('chat_id', $chatId)
+            ->orderByDesc('created_at')
+            ->skip(($page - 1) * self::HISTORY_PAGE_SIZE)
+            ->limit(self::HISTORY_PAGE_SIZE)
+            ->get()
+            ->all();
+
+        $page = $this->menu->history($chatId, $runs, $page, $totalPages, $t);
+
+        $this->sender->send($botConfig, new SendMessageMethodDTO(
+            chatId: (string) $chatId,
+            text: $page['text'],
+            parseMode: \BAGArt\TelegramBot\TgApi\Methods\Enum\ParseModeEnum::HTML,
+            replyMarkup: $page['keyboard'],
+        ));
+    }
+
+    /**
+     * @param  callable(string, array<string, string>): string  $t
+     */
+    private function showHistoryEntry(CallbackQueryTypeDTO $query, TgBotConfig $botConfig, int $chatId, string $runId, callable $t): void
+    {
+        $botId = (string) $botConfig->botId;
+
+        $run = SummarizerRun::query()
+            ->where('bot_id', $botId)
+            ->where('chat_id', $chatId)
+            ->whereKey($runId)
+            ->first();
+
+        if ($run === null) {
+            $this->answer($botConfig, $query, $t('error.run_not_found'), alert: true);
+
+            return;
+        }
+
+        $page = $this->menu->historyView($chatId, $run, $t);
+
+        $this->sender->send($botConfig, new SendMessageMethodDTO(
+            chatId: (string) $chatId,
+            text: $page['text'],
+            parseMode: \BAGArt\TelegramBot\TgApi\Methods\Enum\ParseModeEnum::HTML,
+            replyMarkup: $page['keyboard'],
+        ));
+
+        $this->answer($botConfig, $query);
     }
 
     public function onException(ProcessorErrorContext $context): void
