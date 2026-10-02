@@ -38,7 +38,7 @@
     },
     "scripts": {
         "test": [
-            "@php ../../../vendor/bin/phpunit --testsuite SummarizerModule"
+            "@php ../../../vendor/bin/pest --testsuite SummarizerModule"
         ]
     },
     "repositories": {
