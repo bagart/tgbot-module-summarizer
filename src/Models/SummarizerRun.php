@@ -31,6 +31,7 @@ class SummarizerRun extends Model
     protected $fillable = [
         'bot_id',
         'chat_id',
+        'thread_id',
         'period_from',
         'period_to',
         'message_count',
@@ -50,6 +51,7 @@ class SummarizerRun extends Model
     {
         return [
             'chat_id' => 'integer',
+            'thread_id' => 'integer',
             'period_from' => 'integer',
             'period_to' => 'integer',
             'message_count' => 'integer',

@@ -40,18 +40,18 @@ class DigestRunner
     ) {
     }
 
-    public function run(TgBotConfig $botConfig, int $chatId, ?int $fromTsOverride = null): DigestOutcome
+    public function run(TgBotConfig $botConfig, int $chatId, ?int $fromTsOverride = null, ?int $threadId = null): DigestOutcome
     {
         $botId = (string) $botConfig->botId;
-        $lock = Cache::lock($this->lockKey($botId, $chatId), self::LOCK_TTL_SECONDS);
+        $lock = Cache::lock($this->lockKey($botId, $chatId, $threadId), self::LOCK_TTL_SECONDS);
 
         if (! $lock->get()) {
             return DigestOutcome::busy();
         }
 
         try {
-            [$fromTs, $toTs] = $this->resolvePeriod($botId, $chatId, $fromTsOverride);
-            $digest = $this->builder->build($botId, $chatId, $fromTs, $toTs);
+            [$fromTs, $toTs] = $this->resolvePeriod($botId, $chatId, $fromTsOverride, $threadId);
+            $digest = $this->builder->build($botId, $chatId, $fromTs, $toTs, $threadId);
 
             if ($digest === null) {
                 return DigestOutcome::skipped('No messages collected for the period');
@@ -84,13 +84,13 @@ class DigestRunner
             try {
                 $summary = $this->client->complete($config, $prompt['system'], $prompt['user']);
             } catch (LlmCallException $e) {
-                $this->storeRun($botId, $chatId, $fromTs, $toTs, $digest, $config, null, $e->getMessage(), $startedAt, $tokenRow->id);
+                $this->storeRun($botId, $chatId, $threadId, $fromTs, $toTs, $digest, $config, null, $e->getMessage(), $startedAt, $tokenRow->id);
 
                 return DigestOutcome::failed($e->getMessage());
             }
 
-            $this->storeRun($botId, $chatId, $fromTs, $toTs, $digest, $config, $summary, null, $startedAt, $tokenRow->id);
-            $this->sendSummary($botConfig, $chatId, $summary);
+            $this->storeRun($botId, $chatId, $threadId, $fromTs, $toTs, $digest, $config, $summary, null, $startedAt, $tokenRow->id);
+            $this->sendSummary($botConfig, $chatId, $summary, $threadId);
 
             Log::info('Summarizer digest produced', [
                 'module' => 'summarizer',
@@ -120,7 +120,7 @@ class DigestRunner
     /**
      * @return array{0: int, 1: int}
      */
-    private function resolvePeriod(string $botId, int $chatId, ?int $fromTsOverride): array
+    private function resolvePeriod(string $botId, int $chatId, ?int $fromTsOverride, ?int $threadId): array
     {
         $toTs = time();
 
@@ -129,10 +129,17 @@ class DigestRunner
         }
 
         $settings = $this->settingsService->get($botId, $chatId);
-        $lastRunTo = SummarizerRun::query()
+        $query = SummarizerRun::query()
             ->where('bot_id', $botId)
-            ->where('chat_id', $chatId)
-            ->max('period_to');
+            ->where('chat_id', $chatId);
+
+        if ($threadId !== null) {
+            $query->where('thread_id', $threadId);
+        } else {
+            $query->whereNull('thread_id');
+        }
+
+        $lastRunTo = $query->max('period_to');
 
         $windowStart = $toTs - $settings->intervalMinutes * 60;
 
@@ -154,6 +161,7 @@ class DigestRunner
     private function storeRun(
         string $botId,
         int $chatId,
+        ?int $threadId,
         int $fromTs,
         int $toTs,
         DigestResult $digest,
@@ -166,6 +174,7 @@ class DigestRunner
         SummarizerRun::create([
             'bot_id' => $botId,
             'chat_id' => $chatId,
+            'thread_id' => $threadId,
             'period_from' => $fromTs,
             'period_to' => $toTs,
             'message_count' => $digest->messageCount,
@@ -182,12 +191,13 @@ class DigestRunner
         ]);
     }
 
-    private function sendSummary(TgBotConfig $botConfig, int $chatId, string $summary): void
+    private function sendSummary(TgBotConfig $botConfig, int $chatId, string $summary, ?int $threadId): void
     {
         foreach ($this->chunk($summary) as $chunk) {
             $this->sender->send($botConfig, new SendMessageMethodDTO(
                 chatId: (string) $chatId,
                 text: $chunk,
+                messageThreadId: $threadId,
             ));
         }
     }
@@ -227,8 +237,10 @@ class DigestRunner
         return date('d.m.Y H:i', $fromTs).' — '.date('d.m.Y H:i', $toTs).' (UTC'.date('P').')';
     }
 
-    private function lockKey(string $botId, int $chatId): string
+    private function lockKey(string $botId, int $chatId, ?int $threadId): string
     {
-        return sprintf('summarizer:run:%s:%d', $botId, $chatId);
+        return $threadId !== null
+            ? sprintf('summarizer:run:%s:%d:t%d', $botId, $chatId, $threadId)
+            : sprintf('summarizer:run:%s:%d', $botId, $chatId);
     }
 }

@@ -22,7 +22,7 @@ class DigestBuilder
     ) {
     }
 
-    public function build(string $botId, int $chatId, int $fromTs, int $toTs): ?DigestResult
+    public function build(string $botId, int $chatId, int $fromTs, int $toTs, ?int $threadId = null): ?DigestResult
     {
         $query = SummarizerMessage::query()
             ->where('bot_id', $botId)
@@ -30,6 +30,12 @@ class DigestBuilder
             ->whereBetween('sent_at', [$fromTs, $toTs])
             ->orderBy('sent_at')
             ->orderBy('id');
+
+        if ($threadId !== null) {
+            $query->where('thread_id', $threadId);
+        } else {
+            $query->whereNull('thread_id');
+        }
 
         $total = (clone $query)->count();
 
