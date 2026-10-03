@@ -27,13 +27,13 @@
     },
     "autoload": {
         "psr-4": {
-            "BAGArt\\TelegramBotSummarizer\\": "src/"
+            "BAGArt\\TelegramBotSummarizer\\": "src/",
+            "BAGArt\\TelegramBotSummarizer\\Database\\Factories\\": "database/factories/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "BAGArt\\TelegramBotSummarizer\\Tests\\": "tests/",
-            "BAGArt\\TelegramBotSummarizer\\Database\\Factories\\": "database/factories/"
+            "BAGArt\\TelegramBotSummarizer\\Tests\\": "tests/"
         }
     },
     "scripts": {
