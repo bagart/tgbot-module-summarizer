@@ -137,3 +137,38 @@ source of truth for collection; the `SummarizerSettings::$enabled` DTO field and
 - `src/Ui/AdminMenuRenderer.php` + `SummarizerCommandProcessor.php` / `AdminMenuProcessor.php` — explicit `bool $enabled` parameter
 - `src/Web/SummarizerWebUi.php` — `enabled` schema field/validate/locales removed
 - Questions: `docs/questions/summarizer-{chat-default-mechanism,dispatch-exemption,suite-driver,web-enabled-field}.md`
+
+---
+
+## Admin Candy Closure — Tests + Topic Status (2026-10-11)
+
+GH #9 epic remainder: the model dropdown (#15), run history (#13) and per-topic
+digesting (#14) implementations existed but had zero test coverage, and #14's
+"topic-level status in the admin panel" was missing.
+
+### Key Decisions
+
+- **Per-topic settings superseded.** #14's original scope mentioned per-topic
+  interval/min_messages/template config; the parent epic settled on automatic
+  per-topic digesting driven by chat-level settings (topics auto-discovered
+  from recent messages). Binding interpretation — no per-topic config layer.
+- **Topic-level status = main-menu block.** `TopicStatusReader` projects the
+  latest `summarizer_runs` row per non-null `thread_id` (status emoji + last
+  run time); `AdminMenuRenderer::main()` renders `menu.topics_*` strings
+  (5 locales). No new callback pages; read-only projection.
+- **Test coverage delivered** as three feature suites
+  (`SummarizerHistoryMenuTest`, `SummarizerModelMenuTest`,
+  `SummarizerTopicDigestTest`) + `modelsFor` cases in `LlmProviderRegistryTest`;
+  shared dispatch helpers (`smSelector`/`smContext`/`smRunUpdate`/`smBotUser`)
+  moved from `SummarizerMenuFlowTest` into `helpers.php` for reuse.
+- History/model/topic flows are driven through real `AdminMenuProcessor`
+  callback presses (inviter access path — no Telegram API).
+
+### Files
+
+- `src/Ui/TopicStatusReader.php` — latest-run-per-topic projection (new)
+- `src/Ui/AdminMenuRenderer.php` — `main()` topics block (`$topics` param)
+- `src/Processing/AdminMenuProcessor.php` / `SummarizerCommandProcessor.php` — pass `TopicStatusReader::read()`
+- `src/I18n/SummarizerStrings.php` — `menu.topics_header` / `menu.topics_none` / `menu.topic_line` ×5 locales
+- `tests/Feature/Summarizer/{SummarizerHistoryMenuTest,SummarizerModelMenuTest,SummarizerTopicDigestTest}.php`
+- `tests/Unit/LlmProviderRegistryTest.php` — curated-list completeness cases

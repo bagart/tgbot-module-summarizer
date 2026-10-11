@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\TelegramBotSummarizer\Ui;
 
+use BAGArt\TelegramBotSummarizer\Events\SummarizerAuditEvent;
 use Illuminate\Support\Facades\DB;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerPendingAction;
 
@@ -38,6 +39,15 @@ class PendingInputService
                 'expires_at' => time() + $this->ttlMinutes * 60,
             ],
         );
+
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::PENDING_INPUT_CHANGED,
+            botId: $botId,
+            subjectType: 'chat',
+            subjectId: $chatId,
+            actorId: $userTgId,
+            context: ['action' => $action],
+        ));
     }
 
     /**

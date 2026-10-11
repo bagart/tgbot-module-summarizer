@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\TelegramBotSummarizer\Processing;
 
+use BAGArt\TelegramBotSummarizer\Events\SummarizerAuditEvent;
 use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBot\Contracts\Outbound\TgSenderContract;
 use BAGArt\TelegramBot\Contracts\Processing\Processors\TgModuleProcessorContract;
@@ -132,6 +133,15 @@ class CollectMessageProcessor implements TgModuleProcessorContract
                         ['bot_id' => $botId, 'chat_id' => $chatId, 'inviter_tg_id' => (int) $message->from->id],
                         ['inviter_username' => $message->from->username, 'invited_at' => time()],
                     );
+
+                    event(new SummarizerAuditEvent(
+                        SummarizerAuditEvent::CHAT_ACCESS_CHANGED,
+                        botId: $botId,
+                        subjectType: 'chat',
+                        subjectId: $chatId,
+                        actorId: $message->from->id,
+                        context: ['inviterTgId' => (int) $message->from->id],
+                    ));
                 } catch (Throwable $e) {
                     Log::warning('Summarizer: failed to record inviter', [
                         'bot_id' => $botId,
@@ -224,6 +234,15 @@ class CollectMessageProcessor implements TgModuleProcessorContract
             'active_token_id' => $row->id,
             'provider_key' => $providerKey,
         ]);
+
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::PROVIDER_TOKEN_CREATED,
+            botId: $botId,
+            subjectType: 'summarizer_token',
+            subjectId: $row->id,
+            actorId: $message->from->id,
+            context: ['providerKey' => $providerKey, 'tokenId' => (int) $row->id],
+        ));
 
         // The key must not stay visible in the chat history
         $this->sender->send($botConfig, new DeleteMessageMethodDTO(chatId: (string) $chatId, messageId: $message->messageId));
@@ -333,6 +352,14 @@ class CollectMessageProcessor implements TgModuleProcessorContract
                 'is_bot' => $message->from->isBot,
                 'sent_at' => $message->date,
             ]);
+
+            event(new SummarizerAuditEvent(
+                SummarizerAuditEvent::MESSAGE_STORED,
+                botId: $botId,
+                subjectType: 'chat',
+                subjectId: $chatId,
+                context: ['messageId' => $message->messageId, 'userTgId' => (int) $message->from->id],
+            ));
         } catch (\Illuminate\Database\QueryException $e) {
             // At-least-once webhook delivery: duplicates are expected and ignored.
             $sqlState = (string) $e->getCode();

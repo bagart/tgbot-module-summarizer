@@ -4,13 +4,9 @@ declare(strict_types=1);
 
 require_once __DIR__.'/helpers.php';
 
-use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBot\Configs\TgServiceConfig;
 use BAGArt\TelegramBot\Contracts\ApiCommunication\TgBotApiDTOClientContract;
 use BAGArt\TelegramBot\Contracts\Modules\ModuleEnablementContract;
-use BAGArt\TelegramBot\Contracts\Outbound\TgSenderContract;
-use BAGArt\TelegramBot\Processing\BotProcessorContext;
-use BAGArt\TelegramBot\Processing\RegisteredUpdateProcessorSelector;
 use BAGArt\TelegramBot\TgApi\Methods\DTO\SendMessageMethodDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\CallbackQueryTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberLeftTypeDTO;
@@ -19,9 +15,7 @@ use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberUpdatedTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\UpdateTypeDTO;
-use BAGArt\TelegramBot\TgApi\Types\DTO\UserTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\Enum\ChatPropTypeEnum;
-use BAGArt\TelegramBot\TgBotSetup;
 use BAGArt\TelegramBot\TgBotSetupFactory;
 use BAGArt\TelegramBotManagement\Models\TgBot;
 use BAGArt\TelegramBotSummarizer\Models\SummarizerChatAccess;
@@ -45,55 +39,6 @@ beforeEach(function () {
     // Prime the admin-list cache so access checks never hit the network
     Cache::put('summarizer:admins:test_bot:-100100', [], 60);
 });
-
-function smSelector(?TgBotSetup $botSetup = null): RegisteredUpdateProcessorSelector
-{
-    $botSetup ??= app(TgBotSetupFactory::class)->create(serviceConfig: new TgServiceConfig());
-
-    return new RegisteredUpdateProcessorSelector(
-        serviceConfig: new TgServiceConfig(),
-        botSetup: $botSetup,
-        moduleEnablement: app(ModuleEnablementContract::class),
-    );
-}
-
-/** Selector context with the sender swapped for a spy (assert on sends). */
-function smContext(TgBotSetup $botSetup, TgSenderContract $sender): BotProcessorContext
-{
-    return new BotProcessorContext(
-        logger: $botSetup->logger,
-        tgSender: $sender,
-        tgApiCaller: $botSetup->tgApiCaller,
-        processorRegistry: $botSetup->processorRegistry,
-        serviceConfig: $botSetup->serviceConfig,
-        botSetup: $botSetup,
-        dbLogger: $botSetup->dbLogger,
-        messageRules: $botSetup->messageRules,
-        commandRegistry: $botSetup->commandRegistry,
-    );
-}
-
-function smRunUpdate(UpdateTypeDTO $update, TgBotConfig $botConfig): void
-{
-    foreach (smSelector()->selectProcessors($update, $botConfig) as $action => $processors) {
-        foreach ($processors as $processor) {
-            $dto = match ($action) {
-                'message', 'editedMessage', 'channelPost' => $update->message,
-                'callbackQuery' => $update->callbackQuery,
-                'myChatMember' => $update->myChatMember,
-                'chatMember' => $update->chatMember,
-                default => $update->message,
-            };
-
-            $processor->process($dto, $botConfig, $action);
-        }
-    }
-}
-
-function smBotUser(): UserTypeDTO
-{
-    return new UserTypeDTO(id: '999000111', isBot: true, firstName: 'Digest', username: 'digest_bot');
-}
 
 it('discovers the summarizer module', function () {
     expect(app(BAGArt\TelegramBot\Modules\TgModuleRegistry::class)->has('summarizer'))->toBeTrue();

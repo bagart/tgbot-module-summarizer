@@ -99,4 +99,38 @@ final class LlmProviderRegistryTest extends TestCase
         self::assertSame(10, $config['timeout_seconds']);
         self::assertSame(60, mb_strlen($config['name']));
     }
+
+    public function test_every_preset_has_a_non_empty_curated_model_list(): void
+    {
+        $registry = new LlmProviderRegistry();
+
+        foreach ($registry->all() as $preset) {
+            $models = $registry->modelsFor($preset->key);
+
+            self::assertNotEmpty($models, "Preset '{$preset->key}' has no curated models");
+        }
+    }
+
+    public function test_default_preset_model_is_first_in_its_curated_list(): void
+    {
+        $registry = new LlmProviderRegistry();
+
+        foreach ($registry->all() as $preset) {
+            $models = $registry->modelsFor($preset->key);
+
+            self::assertSame(
+                $preset->model,
+                $models[0],
+                "Preset '{$preset->key}' default model must lead its curated list",
+            );
+        }
+    }
+
+    public function test_models_for_returns_empty_for_unknown_and_custom_keys(): void
+    {
+        $registry = new LlmProviderRegistry();
+
+        self::assertSame([], $registry->modelsFor('no-such-provider'));
+        self::assertSame([], $registry->modelsFor(LlmProviderRegistry::CUSTOM_KEY));
+    }
 }

@@ -11,6 +11,7 @@ use BAGArt\TelegramBot\Modules\TgModuleRegistrar;
 use BAGArt\TelegramBot\TgApi\Types\DTO\CallbackQueryTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberUpdatedTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
+use BAGArt\TelegramBotSummarizer\Events\SummarizerAuditEvent;
 use BAGArt\TelegramBotSummarizer\Processing\AdminMenuProcessor;
 use BAGArt\TelegramBotSummarizer\Processing\CollectMessageProcessor;
 use BAGArt\TelegramBotSummarizer\Processing\MyChatMemberProcessor;
@@ -80,5 +81,6 @@ class SummarizerModule implements TgModuleContract
         );
 
         $registrar->webUi(SummarizerWebUi::class)->webApi(SummarizerUiHandler::class);
+        $registrar->auditEvent(SummarizerAuditEvent::class);
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\TelegramBotSummarizer\Processing;
 
+use BAGArt\TelegramBotSummarizer\Events\SummarizerAuditEvent;
 use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBot\Contracts\Outbound\TgSenderContract;
 use BAGArt\TelegramBot\Contracts\Processing\Processors\TgModuleProcessorContract;
@@ -23,6 +24,7 @@ use BAGArt\TelegramBotSummarizer\Settings\SummarizerSettingsService;
 use BAGArt\TelegramBotSummarizer\Ui\AdminMenuRenderer;
 use BAGArt\TelegramBotSummarizer\Ui\CallbackRoute;
 use BAGArt\TelegramBotSummarizer\Ui\PendingInputService;
+use BAGArt\TelegramBotSummarizer\Ui\TopicStatusReader;
 use Throwable;
 
 /**
@@ -125,7 +127,7 @@ class AdminMenuProcessor implements TgModuleProcessorContract
 
         switch ($verb) {
             case CallbackRoute::VERB_MENU:
-                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->main($chatId, $s, $enabled, $tk, $t));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->main($chatId, $s, $enabled, $tk, $t, TopicStatusReader::read($botId, $chatId)));
                 $this->answer($botConfig, $query);
 
                 return;
@@ -160,8 +162,18 @@ class AdminMenuProcessor implements TgModuleProcessorContract
                 // reserved-key write $enabled is the post-toggle state.
                 $enabled = $verb === CallbackRoute::VERB_ENABLE;
                 $this->settings->patch($botId, $chatId, ['enabled' => $enabled]);
+
+                event(new SummarizerAuditEvent(
+                    SummarizerAuditEvent::CHAT_ENABLEMENT_CHANGED,
+                    botId: $botId,
+                    subjectType: 'chat',
+                    subjectId: $chatId,
+                    actorId: $query->from->id,
+                    newState: ['enabled' => $enabled],
+                ));
+
                 $this->answer($botConfig, $query, $enabled ? $t('confirm.enabled') : $t('confirm.disabled'));
-                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->main($chatId, $s, $enabled, $tk, $t));
+                $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->main($chatId, $s, $enabled, $tk, $t, TopicStatusReader::read($botId, $chatId)));
 
                 return;
 
@@ -175,6 +187,16 @@ class AdminMenuProcessor implements TgModuleProcessorContract
                 }
 
                 $this->settings->patch($botId, $chatId, ['interval_minutes' => $minutes]);
+
+                event(new SummarizerAuditEvent(
+                    SummarizerAuditEvent::INTERVAL_CHANGED,
+                    botId: $botId,
+                    subjectType: 'chat',
+                    subjectId: $chatId,
+                    actorId: $query->from->id,
+                    newState: ['intervalMinutes' => $minutes],
+                ));
+
                 $this->answer($botConfig, $query, $t('confirm.interval_updated'));
                 $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->intervals($chatId, $s, $t));
 
@@ -215,6 +237,16 @@ class AdminMenuProcessor implements TgModuleProcessorContract
                 }
 
                 $this->settings->patch($botId, $chatId, ['template_id' => (string) $arg, 'custom_template' => null]);
+
+                event(new SummarizerAuditEvent(
+                    SummarizerAuditEvent::TEMPLATE_CHANGED,
+                    botId: $botId,
+                    subjectType: 'chat',
+                    subjectId: $chatId,
+                    actorId: $query->from->id,
+                    newState: ['templateId' => (string) $arg],
+                ));
+
                 $this->answer($botConfig, $query, $t('confirm.template_updated'));
                 $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->templates($chatId, $s, $t));
 
@@ -345,6 +377,16 @@ class AdminMenuProcessor implements TgModuleProcessorContract
         }
 
         $this->settings->patch($botId, $chatId, $patch);
+
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::PROVIDER_CHANGED,
+            botId: $botId,
+            subjectType: 'chat',
+            subjectId: $chatId,
+            actorId: $query->from->id,
+            newState: ['providerKey' => $key],
+        ));
+
         $this->answer($botConfig, $query, $t('confirm.provider_selected'));
         $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->providers($chatId, $s, $t));
     }
@@ -457,6 +499,15 @@ class AdminMenuProcessor implements TgModuleProcessorContract
             $this->settings->patch($botId, $chatId, ['active_token_id' => null]);
         }
 
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::PROVIDER_TOKEN_DELETED,
+            botId: $botId,
+            subjectType: 'summarizer_token',
+            subjectId: $token->id,
+            actorId: $query->from->id,
+            context: ['providerKey' => (string) $token->provider_key, 'wasActive' => $wasActive],
+        ));
+
         $this->answer($botConfig, $query, $t('confirm.token_deleted'));
         $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->tokens($chatId, $s, $tk, $t));
     }
@@ -518,6 +569,17 @@ class AdminMenuProcessor implements TgModuleProcessorContract
 
         if ($model === '__reset__') {
             $this->settings->patch($botId, $chatId, ['model_override' => null]);
+
+            event(new SummarizerAuditEvent(
+                SummarizerAuditEvent::MODEL_OVERRIDE_REMOVED,
+                botId: $botId,
+                subjectType: 'chat',
+                subjectId: $chatId,
+                actorId: $query->from->id,
+                oldState: ['modelOverride' => $settings->modelOverride],
+                newState: ['modelOverride' => null],
+            ));
+
             $this->answer($botConfig, $query, $t('confirm.model_reset'));
             $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->models($chatId, $s, $t));
 
@@ -531,6 +593,16 @@ class AdminMenuProcessor implements TgModuleProcessorContract
         }
 
         $this->settings->patch($botId, $chatId, ['model_override' => $model]);
+
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::MODEL_OVERRIDE_CREATED,
+            botId: $botId,
+            subjectType: 'chat',
+            subjectId: $chatId,
+            actorId: $query->from->id,
+            newState: ['modelOverride' => $model],
+        ));
+
         $this->answer($botConfig, $query, $t('confirm.model_selected'));
         $this->renderPage($botConfig, $chatId, fn ($s, $tk) => $this->menu->models($chatId, $s, $t));
     }

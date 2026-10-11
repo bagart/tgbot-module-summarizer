@@ -31,9 +31,10 @@ class AdminMenuRenderer
     /**
      * @param  list<SummarizerToken>  $tokens
      * @param  callable(string, array<string, string>): string  $t  i18n lookup
+     * @param  list<array{threadId: int, ok: bool, lastRunLabel: string}>  $topics
      * @return array{text: string, keyboard: InlineKeyboardMarkupTypeDTO}
      */
-    public function main(int $chatId, SummarizerSettings $settings, bool $enabled, array $tokens, callable $t): array
+    public function main(int $chatId, SummarizerSettings $settings, bool $enabled, array $tokens, callable $t, array $topics = []): array
     {
         $tokenLabel = $this->activeTokenLabel($settings, $tokens, $t);
         $providerName = $this->providerName($settings->providerKey, $t);
@@ -44,6 +45,22 @@ class AdminMenuRenderer
             ? $t('menu.template_custom')
             : ($this->templates->get($settings->templateId)?->name ?? $settings->templateId);
 
+        $topicLines = [];
+
+        if ($topics === []) {
+            $topicLines[] = $t('menu.topics_none');
+        } else {
+            $topicLines[] = $t('menu.topics_header', ['count' => (string) count($topics)]);
+
+            foreach ($topics as $topic) {
+                $topicLines[] = $t('menu.topic_line', [
+                    'topic' => '#'.$topic['threadId'],
+                    'status' => $topic['ok'] ? '✅' : '❌',
+                    'last' => $topic['lastRunLabel'],
+                ]);
+            }
+        }
+
         $text = $t('menu.title')."\n"
             .$t('menu.status_label', ['status' => $status])."\n"
             .$t('menu.interval_label', ['interval' => $this->formatInterval($settings->intervalMinutes)])."\n"
@@ -51,7 +68,8 @@ class AdminMenuRenderer
             .$t('menu.model_label', ['model' => $modelLabel])."\n"
             .$t('menu.active_token_label', ['token' => $tokenLabel])."\n"
             .$t('menu.template_label', ['template' => $templateLabel])."\n"
-            .$t('menu.min_messages_label', ['count' => (string) $settings->minMessages])."\n\n"
+            .$t('menu.min_messages_label', ['count' => (string) $settings->minMessages])."\n"
+            .implode("\n", $topicLines)."\n\n"
             .$t('menu.privacy_hint');
 
         $turnOff = $enabled

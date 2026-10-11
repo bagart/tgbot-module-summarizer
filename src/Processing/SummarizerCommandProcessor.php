@@ -17,6 +17,7 @@ use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
 use BAGArt\TelegramBotSummarizer\I18n\SummarizerStrings;
 use BAGArt\TelegramBotSummarizer\ModuleFactory;
 use BAGArt\TelegramBotSummarizer\Ui\AdminMenuRenderer;
+use BAGArt\TelegramBotSummarizer\Ui\TopicStatusReader;
 use Throwable;
 
 /**
@@ -98,7 +99,7 @@ class SummarizerCommandProcessor implements TgModuleProcessorContract
                 ->all();
 
             $t = fn (string $key, array $replacements = []): string => SummarizerStrings::get($settings->locale, $key, $replacements);
-            $page = $this->menu->main($chatId, $settings, $enabled, $tokens, $t);
+            $page = $this->menu->main($chatId, $settings, $enabled, $tokens, $t, TopicStatusReader::read($botId, $chatId));
 
             $this->sender->send($botConfig, new SendMessageMethodDTO(
                 chatId: (string) $chatId,

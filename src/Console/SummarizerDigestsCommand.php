@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\TelegramBotSummarizer\Console;
 
+use BAGArt\TelegramBotSummarizer\Events\SummarizerAuditEvent;
 use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBot\Contracts\Modules\ModuleSettingsContract;
 use BAGArt\TelegramBotManagement\Models\TgBot;
@@ -152,7 +153,7 @@ class SummarizerDigestsCommand extends Command
         $retentionDays = (int) config('summarizer.retention_days', 14);
         $cutoff = time() - $retentionDays * 86400;
 
-        SummarizerMessage::query()
+        $purgedMessages = SummarizerMessage::query()
             ->where('sent_at', '<', $cutoff)->delete();
 
         $expiredRuns = SummarizerRun::query()
@@ -165,7 +166,13 @@ class SummarizerDigestsCommand extends Command
             }
         }
 
-        SummarizerRun::query()
+        $purgedRuns = SummarizerRun::query()
             ->where('period_to', '<', $cutoff)->delete();
+
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::RETENTION_PURGED,
+            subjectType: 'retention',
+            context: ['messages' => (int) $purgedMessages, 'runs' => (int) $purgedRuns, 'cutoff' => $cutoff],
+        ));
     }
 }

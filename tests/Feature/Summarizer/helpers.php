@@ -3,18 +3,24 @@
 declare(strict_types=1);
 
 use BAGArt\TelegramBot\Configs\TgBotConfig;
+use BAGArt\TelegramBot\Configs\TgServiceConfig;
 use BAGArt\TelegramBot\Contracts\ApiCommunication\TgBotApiDTOClientContract;
 use BAGArt\TelegramBot\Contracts\Modules\ModuleEnablementContract;
 use BAGArt\TelegramBot\Contracts\Modules\ModuleSettingsContract;
 use BAGArt\TelegramBot\Contracts\Outbound\TgSenderContract;
 use BAGArt\TelegramBot\Contracts\TgApi\TgApiMethodDTOContract;
 use BAGArt\TelegramBot\Http\Pure\TgApiResponse;
+use BAGArt\TelegramBot\Processing\BotProcessorContext;
+use BAGArt\TelegramBot\Processing\RegisteredUpdateProcessorSelector;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberAdministratorTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatMemberOwnerTypeDTO;
+use BAGArt\TelegramBot\TgApi\Types\DTO\UpdateTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\Enum\ChatPropTypeEnum;
 use BAGArt\TelegramBot\TgApi\Types\DTO\ChatTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\MessageTypeDTO;
 use BAGArt\TelegramBot\TgApi\Types\DTO\UserTypeDTO;
+use BAGArt\TelegramBot\TgBotSetup;
+use BAGArt\TelegramBot\TgBotSetupFactory;
 use BAGArt\TelegramModuleEngine\Activation\ModuleActivationReader;
 use Illuminate\Support\Facades\DB;
 
@@ -32,7 +38,7 @@ function smUser(int $id, ?string $username = 'tester'): UserTypeDTO
     return new UserTypeDTO(id: (string) $id, isBot: false, firstName: 'Tester', username: $username);
 }
 
-function smGroupMessage(int $chatId, int $userId, string $text, int $messageId = 10): MessageTypeDTO
+function smGroupMessage(int $chatId, int $userId, string $text, int $messageId = 10, ?int $threadId = null): MessageTypeDTO
 {
     return new MessageTypeDTO(
         messageId: $messageId,
@@ -40,7 +46,57 @@ function smGroupMessage(int $chatId, int $userId, string $text, int $messageId =
         chat: new ChatTypeDTO(id: (string) $chatId, type: ChatPropTypeEnum::SUPERGROUP),
         from: smUser($userId),
         text: $text,
+        messageThreadId: $threadId,
     );
+}
+
+function smBotUser(): UserTypeDTO
+{
+    return new UserTypeDTO(id: '999000111', isBot: true, firstName: 'Digest', username: 'digest_bot');
+}
+
+function smSelector(?TgBotSetup $botSetup = null): RegisteredUpdateProcessorSelector
+{
+    $botSetup ??= app(TgBotSetupFactory::class)->create(serviceConfig: new TgServiceConfig());
+
+    return new RegisteredUpdateProcessorSelector(
+        serviceConfig: new TgServiceConfig(),
+        botSetup: $botSetup,
+        moduleEnablement: app(ModuleEnablementContract::class),
+    );
+}
+
+/** Selector context with the sender swapped for a spy (assert on sends). */
+function smContext(TgBotSetup $botSetup, TgSenderContract $sender): BotProcessorContext
+{
+    return new BotProcessorContext(
+        logger: $botSetup->logger,
+        tgSender: $sender,
+        tgApiCaller: $botSetup->tgApiCaller,
+        processorRegistry: $botSetup->processorRegistry,
+        serviceConfig: $botSetup->serviceConfig,
+        botSetup: $botSetup,
+        dbLogger: $botSetup->dbLogger,
+        messageRules: $botSetup->messageRules,
+        commandRegistry: $botSetup->commandRegistry,
+    );
+}
+
+function smRunUpdate(UpdateTypeDTO $update, TgBotConfig $botConfig): void
+{
+    foreach (smSelector()->selectProcessors($update, $botConfig) as $action => $processors) {
+        foreach ($processors as $processor) {
+            $dto = match ($action) {
+                'message', 'editedMessage', 'channelPost' => $update->message,
+                'callbackQuery' => $update->callbackQuery,
+                'myChatMember' => $update->myChatMember,
+                'chatMember' => $update->chatMember,
+                default => $update->message,
+            };
+
+            $processor->process($dto, $botConfig, $action);
+        }
+    }
 }
 
 /** Sender spy recording every pushed method DTO. */

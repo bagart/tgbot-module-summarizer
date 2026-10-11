@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BAGArt\TelegramBotSummarizer\Web;
 
+use BAGArt\TelegramBotSummarizer\Events\SummarizerAuditEvent;
 use BAGArt\TelegramBot\Configs\TgBotConfig;
 use BAGArt\TelegramBotManagement\Models\TgBot;
 use BAGArt\TelegramBotMenu\Contracts\TgWebApiHandlerContract;
@@ -66,6 +67,15 @@ final readonly class SummarizerUiHandler implements TgWebApiHandlerContract
                 $request->requestId,
             );
         }
+
+        event(new SummarizerAuditEvent(
+            SummarizerAuditEvent::DIGEST_TRIGGERED,
+            botId: $context->bot->id,
+            subjectType: 'chat',
+            subjectId: $chat->id,
+            actorId: $context->user->id,
+            context: ['messageCount' => $outcome->messageCount, 'requestId' => $request->requestId],
+        ));
 
         return TgWebResponse::ok([
             'message' => sprintf('Digest posted (%d messages analyzed).', $outcome->messageCount),
